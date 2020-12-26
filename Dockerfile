@@ -24,5 +24,6 @@ VOLUME /dst
 COPY flacTrackFS.py /usr/bin
 
 ENV FUSE_LIBRARY_PATH=/usr/lib/libfuse.so
-CMD /usr/bin/flacTrackFS.py /src /dst
+ENTRYPOINT ["/usr/bin/flacTrackFS.py", "/src", "/dst"]
+
 

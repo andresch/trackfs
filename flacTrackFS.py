@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# https://github.com/acenko/FLACCue
+
 # Note that you do not want to run this as root as this will
 # give anyone read access to any file by just prepending /flaccue/.
 
@@ -22,13 +24,19 @@ sys.path.insert(0, '.')
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 from typing import NamedTuple
 from collections import namedtuple
+from tempfile import mkstemp
 
 from mutagen.flac import FLAC
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, DEVNULL, run
 
 import re
 
+
 from lark import Lark, Transformer
+
+
+# Global variables; set during argument parsing
+IGNORE_TAGS_REX = None
 
 # cue-sheet grammar according to original spec
 # https://web.archive.org/web/20070614044112/http://www.goldenhawk.com/download/cdrwin.pdf
@@ -263,26 +271,50 @@ FILE "Zaz - Paris.flac" WAVE
 #print( CueTransformer(visit_tokens=True).transform(cue_parser.parse(test_cue)) )
 #exit()    
 
-class FilenameInfo(NamedTuple):
-   path : str
-   is_split : bool
-   num : int
-   start : MmSsCc
-   end : MmSsCc
+class FilenameInfo():
+   TRACK_SEPARATOR = None
+   TRACK_FILE_REGEX = None
+   MAX_TITLE_LEN = None
+   
+   def __init__(self, path, is_track, num, title, start, end):
+      self.path = path
+      self.is_track = is_track
+      self.num = num
+      self.title = title[:FilenameInfo.MAX_TITLE_LEN].replace('.','_')
+      self.start = start
+      self.end = end
    
    def to_filename(self):
       (basename, extension) = os.path.splitext(self.path)
-      return f'{basename}.flaccuesplit.{self.num:03d}.{self.start}-{self.end}{extension}'
+      t_opt = "."+self.title if len(self.title) > 0 else ""
+      return f'{basename}{FilenameInfo.TRACK_SEPARATOR}{self.num:03d}{t_opt}.{self.start}-{self.end}{extension}'
+
+   def create_regex(separator, extension, title_length):
+      FilenameInfo.MAX_TITLE_LEN = title_length
+      FilenameInfo.TRACK_SEPARATOR = separator
+      (separator_rex, extension_rex) = [ s.replace('.','\\.') for s in [separator, extension] ]
+      flac_cue_rex = (
+         '^(?P<basename>.*)'+separator_rex
+         + '(?P<num>\\d+)(?P<title>(\\.[^\\.]{,'+str(title_length)
+         + '}?)?)\\.(?P<start>\\d{6})-(?P<end>\d{6})'
+         + '(?P<extension>'+extension_rex+')$'
+      )
+      print(flac_cue_rex)
+      FilenameInfo.TRACK_FILE_REGEX = re.compile(flac_cue_rex)
       
    def parse(path):
-      splits = path.split('.flaccuesplit.')
-      if len(splits) == 1:
-         return FilenameInfo(path, False, None, None, None)
-      
-      (extra, extension) = os.path.splitext(splits[1])
-      (num, start_end) = extra.split('.')
-      (start, end) = [MmSsCc(t) for t in start_end.split('-') ]
-      return FilenameInfo(splits[0]+extension, True, int(num), start, end)
+      match = FilenameInfo.TRACK_FILE_REGEX.match(path)
+      if match is None: 
+         print("no match for "+path);
+         return FilenameInfo(path, False, None, "", None, None)
+      t = match['title']
+      if len(t) > 0: t=t[1:]
+      return FilenameInfo(
+         match['basename']+match['extension'],
+         True,
+         int(match['num']), t,
+         MmSsCc(match['start']), MmSsCc(match['end'])
+      )
 
 class FlacInfo():
    
@@ -306,7 +338,7 @@ class FlacInfo():
          self._cue = CueTransformer(visit_tokens=True
             ).transform(cue_parser.parse(raw_cue[0])
             ).calc_track_times(meta.info.length)
-         print(self._cue)
+         #print(self._cue)
       return self._cue
    
    def tracks(self):
@@ -370,7 +402,7 @@ class FlacInfo():
       if 'ARTIST' in tags:
          tags['COMPOSER'] = tags['ARTIST']
 
-      print(tags)
+      #print(tags)
       return ' '.join([ f'--tag="{k}"="{v}"' for k,vs in tags.items() for v in vs ])
 
 class TagModifications():
@@ -386,6 +418,7 @@ class FlacTrackFS(LoggingMixIn, Operations):
      self.root = realpath(root)
      self.rwlock = threading.RLock()
      self._open_subtracks = {}
+     self._last_positions = {}
      self._last_info = None
 
    def __call__(self, op, path, *args):
@@ -414,7 +447,7 @@ class FlacTrackFS(LoggingMixIn, Operations):
       # appropriate for the shortened data.
       
       info = FilenameInfo.parse(path)
-      if(info.is_split):
+      if(info.is_track):
          try:
             st = os.lstat(info.path)
             toreturn = dict((key, getattr(st, key)) for key in (
@@ -447,116 +480,121 @@ class FlacTrackFS(LoggingMixIn, Operations):
             self._last_info = FlacInfo(path)
          return self._last_info
          
+   def is_new_track(self, path):
+      return path not in self._open_subtracks
+      
+   def announce_track(self, path):
+      self._open_subtracks[path] = None
+
+   def is_announced_track(self, path):
+      return self._open_subtracks[path] is None
+
+   def open_file(self, path, flags, *args, **pargs):
+      fh = os.open(path, flags, *args, **pargs)
+      print(f"open file [{fh}] {path}")
+      self._last_positions[fh] = 0
+      return fh
+      
+   def open_track(self, info, path, flags, *args, **pargs):
+     # Process the FLAC file to extract the track in a temp file
+      (fh,tempfile) = mkstemp()
+      os.close(fh)
+      fi = self.flac_info(info.path)
+      flac_cmd = (
+         f'flac -d --silent --stdout --skip={info.start.flac_time()} --until={info.end.flac_time()} "{info.path}"'
+         f' | flac --silent -f --fast {fi.track_tags(info.num)} -o {tempfile} -'
+      )
+      print(flac_cmd)
+      rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+      with self.rwlock:
+         if rc != 0:
+            # failed to create temporary flac file; return original file
+            os.remove(tempfile)
+            del self._open_subtracks[path]
+            return self.open_file(info.path, flags, *args, **pargs)
+         else:
+            self._open_subtracks[path] = (1, time.time(), tempfile)
+      
+      def cleanup():
+         still_in_use = True
+         while still_in_use:
+            with self.rwlock:
+               (count, last_access, tempfile) = self._open_subtracks[path]
+            if count <= 0 and (time.time() - last_access > 60):
+               still_in_use = False
+            time.sleep(5)
+         print("delete track "+path)
+         with self.rwlock:
+            del self._open_subtracks[path]
+         os.remove(tempfile)
+      
+      print("open track "+path)
+      fh = self.open_file(tempfile, flags, *args, **pargs)
+      print(f"open track [{fh}] {path}\n  from {tempfile}")
+      threading.Thread(target=cleanup).start()
+      return fh
+   
+   def reopen_track(self, path, flags, *args, **pargs):
+      with self.rwlock:
+         # Update the stored info.
+         (count, last_access, tempfile) = self._open_subtracks[path]
+         self._open_subtracks[path] = (count+1, time.time(), tempfile)
+      # open the file once again
+      fh = self.open_file(tempfile, flags, *args, **pargs)
+      self._last_positions[fh] = 0
+      print(f"reopen track [{fh}] {path}")
+      return fh
+      
+   def release_track(self, path, fh):
+      with self.rwlock:
+         (count, last_access, tempfile) = self._open_subtracks[path]
+         self._open_subtracks[path] = (count-1, time.time(), tempfile)
+      print(f"release track [{fh}] {path}")
+      return os.close(fh)
+      
    def open(self, path, flags, *args, **pargs):
       # We don't want FlacTrackFS messing with actual data.
       # Only allow Read-Only access.
       if((flags | os.O_RDONLY) == 0):
          raise ValueError('Can only open files read-only.')
-      raw_path = path
       # Handle the FlacTrackFS files.
       info = FilenameInfo.parse(path)
-      if(info.is_split):
-         with self.rwlock:
-            # Hold a file handle for the actual file.
-            fd = os.open(info.path, flags, *args, **pargs)
-            # If we've already processed this file and still have it in memory.
-            if(raw_path in self._open_subtracks):
-               if(self._open_subtracks[raw_path] is not None):
-                  # Update the stored info.
-                  (positions, audio, count, last_access) = self._open_subtracks[raw_path]
-                  count += 1
-                  last_access = time.time()
-                  positions[fd] = 0
-                  self._open_subtracks[raw_path] = (positions, audio, count, last_access)
-                  # Return the file handle.
-                  return fd
-               else:
-                  # We're still processing this track. Wait for it to finish.
-                  process = False
-            else:
-               # This is a new track to process.
-               process = True
-               self._open_subtracks[raw_path] = None
-         if(process):
-            # Otherwise, we have to process the FLAC file to extract the track.
-            fi = self.flac_info(info.path)
-            flac_cmd = f'flac -d --stdout --skip={info.start.flac_time()} --until={info.end.flac_time()} "{info.path}" | flac --totally-silent --no-seektable --fast --stdout {fi.track_tags(info.num)} -'
-            # re-encode: -0 --disable-fixed-subframes --disable-constant-subframes
-            flac = Popen(flac_cmd, shell=True, stdout=PIPE)
-            (audio, xxx) = flac.communicate()
-            # Store some extra info in addition to the wave file.
-            positions = {}
-            positions[fd] = 0
-            count = 1
-            last_access = time.time()
-            # Keep a copy of the data in memory.
-            self._open_subtracks[raw_path] = (positions, audio, count, last_access)
-            # Define a function that will clean up the memory use once it's no longer needed.
-            def cleanup():
-               (positions, audio, count, last_access) = self._open_subtracks[raw_path]
-               # Wait for all open instances of this file to be closed.
-               # Also ensure there has been no access to the data for 60 seconds.
-               while(count > 0 or (time.time() - last_access < 60)):
-                  with(self.rwlock):
-                     (positions, audio, count, last_access) = self._open_subtracks[raw_path]
-                  # Check every 5 seconds.
-                  time.sleep(5)
-               # Delete the entry. This removes all references to the data which allows
-               # garbage collection to clean up when appropriate.
-               with(self.rwlock):
-                  del self._open_subtracks[raw_path]
-            # Start a thread running that function.
-            thread = threading.Thread(target=cleanup)
-            thread.start()
-            # Return the file handle.
-            return fd
-         else:
-            acquired = False
-            try:
-               while(True):
-                  self.rwlock.acquire()
-                  acquired = True
-                  if(self._open_subtracks[raw_path] is not None):
-                     break
-                  self.rwlock.release()
-                  acquired = False
-                  time.sleep(0.1)
-               # Update the stored info.
-               (positions, audio, count, last_access) = self._open_subtracks[raw_path]
-               count += 1
-               last_access = time.time()
-               positions[fd] = 0
-               self._open_subtracks[raw_path] = (positions, audio, count, last_access)
-               # Return the file handle.
-               return fd
-            finally:
-               if(acquired):
-                  self.rwlock.release()
+      if info.is_track:
+         ready_to_process = False
+         while not ready_to_process:
+            with self.rwlock:
+               if self.is_new_track(path):
+                  ready_to_process = True
+                  self.announce_track(path)
+               elif not self.is_announced_track(path):
+                  # if neither new nor announced then
+                  # we already have cached that track => reopen
+                  return self.reopen_track(path, flags, *args, **pargs)
+                  
+            # give other thread time to finish processing
+            time.sleep(0.1)
+         
+         return self.open_track(info, path, flags, *args, **pargs)         
       else:
          # With any other file, just pass it along normally.
          # This allows FLAC files to be read with a FlacTrackFS path.
          # Note that you do not want to run this as root as this will
          # give anyone read access to any file.
-         with self.rwlock:
-            return os.open(path, flags, *args, **pargs)
+         return self.open_file(path, flags, *args, **pargs)
 
    def read(self, path, size, offset, fh):
-      with self.rwlock:
-         if(path in self._open_subtracks):
-            # For files we've processed.
-            positions, audio, count, last_access = self._open_subtracks[path]
-            # Store the current offset.
-            positions[fh] = offset
-            # Update the last accessed time.
-            last_access = time.time()
-            # Update the stored data.
-            self._open_subtracks[path] = (positions, audio, count, last_access)
-            # Return the data requested.
-            return bytes(audio[positions[fh]:positions[fh]+size])
-         else:
-            # For all other files, just access it normally.
-            os.lseek(fh, offset, 0)
-            return os.read(fh, size)
+      print(f"read from [{fh}] {offset} until {offset+size}")
+      if self._last_positions[fh] != offset:
+         os.lseek(fh, offset, 0)
+      self._last_positions[fh] = offset+size
+      return os.read(fh, size)
+
+   def release(self, path, fh):
+      if FilenameInfo.parse(path).is_track:
+         return self.release_track(path, fh)
+      # Close the OS reference to the file.
+      del self._last_positions[fh]
+      return os.close(fh)
 
    def readdir(self, path, fh):
       path = self.clean_path(path)
@@ -567,7 +605,7 @@ class FlacTrackFS(LoggingMixIn, Operations):
             trx = self.flac_info(os.path.join(path, filename)).tracks()
             if trx:
                for t in trx:
-                  entries.append(FilenameInfo(filename, True, t.num, t.start, t.end).to_filename())
+                  entries.append(FilenameInfo(filename, True, t.num, t.title, t.start, t.end).to_filename())
             else:
                entries.append(filename)
          else:
@@ -577,22 +615,6 @@ class FlacTrackFS(LoggingMixIn, Operations):
    def readlink(self, path, *args, **pargs):
       path = self.clean_path(path)
       return os.readlink(path, *args, **pargs)
-
-   def release(self, path, fh):
-      with(self.rwlock):
-         # If we're closing a FlacTrackFS file...
-         if(path in self._open_subtracks):
-            positions, audio, count, last_access = self._open_subtracks[path]
-            # Delete the file handle from the stored list.
-            del positions[fh]
-            # Decrement the access count.
-            count -= 1
-            # Update the last access time.
-            last_access = time.time()
-            # Update the stored info.
-            self._open_subtracks[path] = (positions, audio, count, last_access)
-         # Close the OS reference to the file.
-         return os.close(fh)
 
    def statfs(self, path):
       path = self.clean_path(path)
@@ -605,10 +627,38 @@ class FlacTrackFS(LoggingMixIn, Operations):
 
 if __name__ == '__main__':
    import argparse
-   parser = argparse.ArgumentParser()
-   parser.add_argument('root')
-   parser.add_argument('mount')
+   parser = argparse.ArgumentParser(
+      description='''Maps a directory to a new mount point while replacing all FLAC files with 
+embedded cue sheets will be replaced with multiple FLAC files for the individual tracks''')
+   parser.add_argument(
+      '-s','--separator', nargs='?', dest='separator', default='.#-#.',
+      help='The separator used inside the name of the track-files. Must never occur in regular filenames (default: ".#-#.")'
+   )
+   parser.add_argument(
+      '-i','--ignore-tags', nargs='?', dest='ignore', default='CUE_TRACK.*|COMMENT',
+      help='A regular expression for tags in the FLAC file that will not be copied to the track FLACs (default: "CUE_TRACK.*|COMMENT")'
+   )
+   parser.add_argument(
+      '-e','--extension', nargs='?', dest='extension', default='.flac',
+      help='The file extension of FLAC files (default: ".flac")'
+   )
+   parser.add_argument(
+      '-k', '--keep-flac-cue', dest='keep', action='store_true',
+      help='Keep the source FLAC+CUE file in the mapped filesystem'
+   )
+   parser.add_argument(
+      'root', 
+      help='The root of the directory tree to be mapped'
+   )
+   parser.add_argument(
+      'mount',
+      help='The mount point for the mapped directory tree'
+   )
    args = parser.parse_args()
+
+   print(args)
+   IGNORE_TAGS_REX = re.compile(args.ignore)
+   FilenameInfo.create_regex(args.separator, args.extension, 20)
 
    #logging.basicConfig(level=logging.DEBUG)
    fuse = FUSE(
