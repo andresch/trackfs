@@ -123,3 +123,8 @@ Acknowlegements
 
 `trackfs` began its live as a clone of [FLACCue](https://github.com/acenko/FLACCue). While FLACCue is designed for the usage with the Plex media server, the underlying idea of both projects is the same. Although there is little unmodified codes of FLACCue left in `trackfs`, the project would most likely not have been started without this groudwork. Kudos to [acenko's](https://github.com/acenko)!
 
+License
+=======
+
+`trackfs` is licensed under the terms of the [GNU Lesser General Public License v3.0](LICENSE.md)
+

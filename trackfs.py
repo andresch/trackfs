@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-
-# https://github.com/acenko/FLACCue
-
-# Note that you do not want to run this as root as this will
-# give anyone read access to any file by just prepending /flaccue/.
+# 
+# Copyright 2020 by Andreas Schmidt
+# All rights reserved.
+# This file is part of the trackfs project
+# and licensed under the terms of the GNU Lesser General Public License v3.0.
+# See https://github.com/andresch/trackfs for details.
+#
+# This file is derived work of the FLACCue project.
+# See https://github.com/acenko/FLACCue for details
 
 from __future__ import print_function, absolute_import, division
 

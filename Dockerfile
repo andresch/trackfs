@@ -1,8 +1,12 @@
 # =================================
 # Dockerfile for trackfs
 # 
-# docker run -ti --rm --device /dev/fuse --cap-add SYS_ADMIN -v "/opt/samba/shares/musik/CD Archiv":/src -v /opt/samba/shares/musik/FLAC-Archiv:/dst:rshared andresch/trackfs
-# --security-opt apparmor:unconfined 
+# Copyright 2020 by Andreas Schmidt
+# All rights reserved.
+# This file is part of the trackfs project
+# and licensed under the terms of the GNU Lesser General Public License v3.0.
+# See https://github.com/andresch/trackfs for details.
+#
 # =================================
 
 FROM docker.io/python:3.8-alpine
