@@ -388,8 +388,9 @@ class FlacInfo():
    def cue(self) -> CueSheet:
       if self._cue is None:
          meta = self.meta()
-         raw_cue = meta.tags['CUESHEET']
+         raw_cue = meta.tags.get('CUESHEET',"")
          if len(raw_cue) == 0:
+            log.debug(f"regular flac file without cue sheet")
             return None
          log.debug(f"raw cue sheet from FLAC file:\n{raw_cue}")
          self._cue = CueTransformer(visit_tokens=True
@@ -522,11 +523,14 @@ class TrackRegistry():
       with self.rwlock:
          del self.registry[key]
          
-      
+class FlacSplitException(Exception):
+   pass
+
 class FlacTrackFS(Operations):
 
-   def __init__(self, root):
+   def __init__(self, root, keep_flac=False):
      self.root = realpath(root)
+     self.keep_flac = keep_flac
      self.rwlock = threading.RLock()
      self.tracks = TrackRegistry(self.rwlock)
      self._processed_tracks = {}
@@ -578,7 +582,7 @@ class FlacTrackFS(Operations):
       return tempfile
       
    def _extract_track(self, path, file_info):
-      """opens a virtual track file
+      """creates a real file for a given virtual track file
       
       extracts the track from the underlying FLAC+CUE file into 
       a temporary file and then opens the temporary file"""
@@ -606,11 +610,11 @@ class FlacTrackFS(Operations):
       os.remove(picturefile)
       with self.rwlock:
          if rc != 0:
-            log.error(f'failed to extract track #{num} from file "{file_info.path}"')
-            # failed to create temporary flac file; return original file
+            err_msg = f'failed to extract track #{num} from file "{file_info.path}"'
+            log.error(err_msg)
             os.remove(trackfile)
             del self.tracks[path]
-            return file_info.path
+            raise FlacSplitExeption(err_msg)
          else:
             self.tracks.add(path, trackfile)
       
@@ -684,10 +688,10 @@ class FlacTrackFS(Operations):
       for filename in os.listdir(path):
          basename, extension = os.path.splitext(filename)
          if( extension == FilenameInfo.FLAC_EXTENSION ):
-            # TODO: handle flac files without cue
-            # TODO: handle "-keep-flac-cue" option
             trx = self._flac_info(os.path.join(path, filename)).tracks()
             if trx:
+               if self.keep_flac:
+                  entries.append(filename)
                for t in trx:
                   entries.append(
                      FilenameInfo(
@@ -698,6 +702,7 @@ class FlacTrackFS(Operations):
                         t.start, 
                         t.end
                      ).to_filename())
+                
             else:
                entries.append(filename)
          else:
@@ -728,28 +733,36 @@ if __name__ == '__main__':
       Maps a directory to a mount point while replacing all FLAC files with 
       embedded cue sheets with multiple FLAC files for the individual tracks''')
    parser.add_argument(
-      '-s','--separator', nargs='?', dest='separator', default='.#-#.',
+      '-s','--separator', dest='separator', default='.#-#.',
       help='The separator used inside the name of the track-files. Must never occur in regular filenames (default: ".#-#.")'
    )
    parser.add_argument(
-      '-i','--ignore-tags', nargs='?', dest='ignore', default='CUE_TRACK.*|COMMENT',
+      '-i','--ignore-tags', dest='ignore', default='CUE_TRACK.*|COMMENT',
       help='A regular expression for tags in the FLAC file that will not be copied to the track FLACs (default: "CUE_TRACK.*|COMMENT")'
    )
    parser.add_argument(
-      '-e','--extension', nargs='?', dest='extension', default='.flac',
+      '-e','--extension', dest='extension', default='.flac',
       help='The file extension of FLAC files (default: ".flac")'
    )
-   # parser.add_argument(
-      # '-k', '--keep-flac-cue', dest='keep', action='store_true',
-      # help='Keep the source FLAC+CUE file in the mapped filesystem'
-   # )
+   parser.add_argument(
+      '-k', '--keep-flac-cue', dest='keep', action='store_true',
+      help='Keep the source FLAC+CUE file in the mapped filesystem'
+   )
    parser.add_argument(
       '-t', '--title-length', dest='title_length', default="20",
       help='Nr. of characters of the track title in filename of track (default: 20)'
    )
    parser.add_argument(
+      '--root-allowed', dest='rootok', action='store_true',
+      help='Allow running as with root permissions; Neither necessary nor recommended. Use only when you know what you are doing'
+   )
+   parser.add_argument(
+      '-v','--verbose', dest='verbose', action='store_true',
+      help='Activate info-level logging'
+   )
+   parser.add_argument(
       '-d','--debug', dest='debug', action='store_true',
-      help='Activate debug logging'
+      help='Activate debug-level logging'
    )
    parser.add_argument(
       'root', 
@@ -764,10 +777,18 @@ if __name__ == '__main__':
    if args.debug: 
       logging.basicConfig(level=logging.DEBUG)
       log.setLevel(logging.DEBUG)
+   elif args.verbose:
+      logging.basicConfig(level=logging.INFO)
+      log.setLevel(logging.INFO)
       
-   
+   if os.geteuid() == 0 and not args.rootok:
+      print(f'''By default {os.path.basename(__file__)} don't allow to run with root permissions. 
+      
+If you are absolutely sure that that's what you want, use the option "--root-allowed"''', file=sys.stderr)
+      exit(1)
+      
    FilenameInfo.init(args.separator, args.extension, int(args.title_length))
    FlacInfo.init(args.ignore)
 
    fuse = FUSE(
-      FlacTrackFS(args.root), args.mount, foreground=True, allow_other=True)
+      FlacTrackFS(args.root, args.keep), args.mount, foreground=True, allow_other=True)
