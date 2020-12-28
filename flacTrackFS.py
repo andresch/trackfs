@@ -10,30 +10,28 @@ from __future__ import print_function, absolute_import, division
 import logging
 import os
 
-import mutagen
 import time
+import string
 import threading
 import math
+import unicodedata
 
-from errno import EACCES
 from os.path import realpath
 
 import sys
 sys.path.insert(0, '.')
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
-from typing import NamedTuple
-from collections import namedtuple
 from tempfile import mkstemp
 
 from mutagen.flac import FLAC
 from subprocess import Popen, PIPE, DEVNULL, run
 
 import re
-
-
 from lark import Lark, Transformer
 
+
+log = logging.getLogger(__name__)
 
 # Global variables; set during argument parsing
 IGNORE_TAGS_REX = None
@@ -42,7 +40,7 @@ IGNORE_TAGS_REX = None
 # https://web.archive.org/web/20070614044112/http://www.goldenhawk.com/download/cdrwin.pdf
 
 cue_grammar = r"""
-   start          : disc_entries tracks
+   cue_sheet      : disc_entries tracks
    disc_entries   : disc_entry* 
    tracks         : track*
     
@@ -117,9 +115,14 @@ cue_grammar = r"""
    %ignore WS"""
 
 class CueSheet():
-   def __init__(self,args):
-      entries = args[0]
-      self.tracks = args[1].children
+   """Relevant information from a parsed cue sheet
+   
+   In the context of FlacTrackFS we're only interested in track
+   information from a cue sheet. All additional data elements are
+   not used
+   """
+   def __init__(self,disc_elements,tracks):
+      self.tracks = tracks
       
    def __repr__(self):
       return f'cuesheet:\n{self.tracks}'
@@ -135,9 +138,32 @@ class CueSheet():
       return self
          
 class CueTrack():
-   def __init__(self, args):
-      self.num = args[0]
-      self.type = args[1]
+   """All information extracted for a track from a cue sheet
+   
+   Attributes
+   ----------
+   num         :  int
+                  The track number
+   type        :  string
+                  The track type
+   start       :  MmSsCc
+                  The start timestamp of the track
+   end         :  MmSsCc
+                  The end timestamp of the track
+   duration    :  MmSsCc
+                  The duration of the track
+   artist      :  list[string]
+                  The artists performing the track
+   composers   :  list[string]
+                  The artists who have written the track
+                  
+   The attributes end and duration don't originate directly from the the track elements
+   in the cue sheet. They get set by calling a CueSheet's `calc_track_times` method
+   once the whole cue sheet got parsed.
+   """
+   def __init__(self, num, type, track_entries):
+      self.num = num
+      self.type = type
       self.artists = None
       self.composers = None
       self.title = None
@@ -145,8 +171,7 @@ class CueTrack():
       self.start = None
       self.end = None
       self.duration = None
-      self.track_entries = args[2]
-      for entry in args[2].children:
+      for entry in track_entries:
          if entry.data == 'performer':
             self._extend__list_attr("artists",entry.children[0])
          if entry.data == 'songwriter':
@@ -172,17 +197,34 @@ class CueTrack():
          setattr(self,name,old_value+values)
             
    def __repr__(self):
-      return ( f"track #{self.num} {self.type} [{self.isrc}] [{self.start}-{self.end}]\n"
-         + (f"  title: '{self.title}'\n" if self.title else "")
-         + (f"  artists: {self.artists}\n" if self.artists else "")
-         + (f"  composers: {self.composers}\n" if self.composers else "")
-         + '\n'
+      return ( f"track #{self.num} {self.type} [{self.isrc}] [{self.start}-{self.end}]"
+         + (f" title: '{self.title}' " if self.title else "")
+         + (f" artists: {self.artists}" if self.artists else "")
+         + (f" composers: {self.composers}" if self.composers else "")
       )
       
+      
 class MmSsCc():
-   mm = 0
-   sscc = 0
+   """ Timestamp / duration information extracted from a cue-sheet
    
+   Attributes
+   ----------
+   mm       :  int
+               minutes
+   sscc     :  int
+               centi-seconds
+   
+   The constructor supports various initializations:
+   - <empty>      :  mm = sscc = 0
+   - float        : interpreted as seconds (and fractions of)
+   - int-triple   : interpreted as (mm, ss, ff), whith ff being 1/75s
+   - 6-charstring : interpreted as "mmsscc"-string
+   - two int      : interpreted as mm, sscc
+   
+   The class supports basic math (+,-)
+   The string representation is "mmsscc"; `flac_time' returns the string 
+   representation than FLAC expects ("mm:ss.cc")
+   """
    def __init__(self,*args):
       if len(args) == 0:
          self.mm = self.sscc = 0
@@ -229,8 +271,11 @@ class MmSsCc():
         return MmSsCc(self.mm-other.mm, sscc)
       
 class CueTransformer(Transformer):
-   start = CueSheet
-   track = CueTrack
+   """Transforms the Lark-parser-tree in a CueSheet"""
+   def cue_sheet(self, subtrees): 
+      return CueSheet(subtrees[0].children, subtrees[1].children)
+   def track(self, subtrees):
+      return CueTrack(subtrees[0], subtrees[1], subtrees[2].children)
    def mmssff(self, elems):
       return MmSsCc(elems[0], elems[1]*100+elems[2]//75)
    def REST_OF_LINE(self, comment_line):
@@ -244,7 +289,7 @@ class CueTransformer(Transformer):
    INDEX=int
    TIME_ELEM=int
 
-cue_parser = Lark(cue_grammar)
+cue_parser = Lark(cue_grammar, start='cue_sheet')
     
 test_cue = r"""REM DISCID A10A2E0D
 PERFORMER "Zaz"
@@ -276,21 +321,30 @@ class FilenameInfo():
    TRACK_FILE_REGEX = None
    MAX_TITLE_LEN = None
    
+   VALID_FILENAME_CHARS = "-_() " + string.ascii_letters + string.digits
+   
    def __init__(self, path, is_track, num, title, start, end):
       self.path = path
       self.is_track = is_track
       self.num = num
-      self.title = title[:FilenameInfo.MAX_TITLE_LEN].replace('.','_')
+      self.title = FilenameInfo.title_for_filename(title)
       self.start = start
       self.end = end
    
+   def title_for_filename(title):
+      cleanedFilename = unicodedata.normalize('NFKD', title)[:FilenameInfo.MAX_TITLE_LEN]
+      return ''.join(c if c in FilenameInfo.VALID_FILENAME_CHARS else "_" for c in cleanedFilename)
+
    def to_filename(self):
       (basename, extension) = os.path.splitext(self.path)
       t_opt = "."+self.title if len(self.title) > 0 else ""
       return f'{basename}{FilenameInfo.TRACK_SEPARATOR}{self.num:03d}{t_opt}.{self.start}-{self.end}{extension}'
 
-   def create_regex(separator, extension, title_length):
+   def init(separator, extension, title_length):
+      """Initialize the configuration settings for generating/identifying track files"""
+      log.info(f'Track-filename settings: separator: "{separator}", extension: "{extension}", title_length: {title_length}')
       FilenameInfo.MAX_TITLE_LEN = title_length
+      FilenameInfo.FLAC_EXTENSION = extension
       FilenameInfo.TRACK_SEPARATOR = separator
       (separator_rex, extension_rex) = [ s.replace('.','\\.') for s in [separator, extension] ]
       flac_cue_rex = (
@@ -299,14 +353,16 @@ class FilenameInfo():
          + '}?)?)\\.(?P<start>\\d{6})-(?P<end>\d{6})'
          + '(?P<extension>'+extension_rex+')$'
       )
-      print(flac_cue_rex)
+      log.debug("filename regex: "+flac_cue_rex)
       FilenameInfo.TRACK_FILE_REGEX = re.compile(flac_cue_rex)
       
    def parse(path):
+      """Construct a FilenameInfo instance from a given path"""
       match = FilenameInfo.TRACK_FILE_REGEX.match(path)
       if match is None: 
-         print("no match for "+path);
+         log.debug(f'no track file in "{path}"');
          return FilenameInfo(path, False, None, "", None, None)
+      log.debug(f'track file in "{path}"');
       t = match['title']
       if len(t) > 0: t=t[1:]
       return FilenameInfo(
@@ -317,6 +373,7 @@ class FilenameInfo():
       )
 
 class FlacInfo():
+   IGNORE_TAGS_REX = [ re.compile(rex) for rex in [ 'CUE_TRACK.*', 'COMMENT', 'ALBUM ARTIST' ] ]
    
    def __init__(self,path):
       self.path : str = path
@@ -334,11 +391,11 @@ class FlacInfo():
          raw_cue = meta.tags['CUESHEET']
          if len(raw_cue) == 0:
             return None
-         #print(raw_cue)
+         log.debug(f"raw cue sheet from FLAC file:\n{raw_cue}")
          self._cue = CueTransformer(visit_tokens=True
             ).transform(cue_parser.parse(raw_cue[0])
             ).calc_track_times(meta.info.length)
-         #print(self._cue)
+         log.debug(f"parsed cue sheet from FLAC file:\n{self._cue}")
       return self._cue
    
    def tracks(self):
@@ -354,12 +411,6 @@ class FlacInfo():
          if t.num == num: return t
       return None
    
-   _IGNORE_TAGS = [ re.compile(rex) for rex in [ 'CUE_TRACK.*', 'COMMENT', 'ALBUM ARTIST' ] ]
-   def _ignore_tag(tag):
-      for ignorex in FlacInfo._IGNORE_TAGS:
-         if ignorex.match(tag): return True
-      return False
-      
    def _album_tags(self):
       meta = self.meta()
       tags = {}
@@ -368,7 +419,7 @@ class FlacInfo():
          # skip multi-line tags
          if len(v.splitlines()) != 1: continue
          # skip _IGNORE_TAGS
-         if FlacInfo._ignore_tag(k): continue
+         if FlacInfo.IGNORE_TAGS_REX.match(k): continue
          if k not in tags: tags[k] = []
          tags[k].append(v)
       
@@ -385,6 +436,7 @@ class FlacInfo():
       tags = {}
       if t is not None: 
          if t.artists:     tags['ARTIST']       = t.artists
+         if t.composers:   tags['COMPOSER']     = t.composers
          if t.isrc:        tags['ISRC']         = [t.isrc]
          if t.num:         tags['TRACKNUMBER']  = [t.num]
          if t.title:       tags['TITLE']        = [t.title]
@@ -402,210 +454,250 @@ class FlacInfo():
       if 'ARTIST' in tags:
          tags['COMPOSER'] = tags['ARTIST']
 
-      #print(tags)
+      log.debug(f"tags for current track: {tags}")
       return ' '.join([ f'--tag="{k}"="{v}"' for k,vs in tags.items() for v in vs ])
 
-class TagModifications():
-   def __init__(self,spec):
-      self.replacements = self.parse(spec)
+   def init(ignore):
+      log.info(f'Tags to ignore: "{ignore}"')
+      FlacInfo.IGNORE_TAGS_REX = re.compile(ignore)
+
+class TrackRegistry():
+   """Keeps track of all individual tracks that currently get processed
    
-   def parse(self,spec):
-      pass
+   Each track has a unique key (usually the path of the virtual track file).
    
+   The registry distinguishes three states for a track:
+   * Unregistered: The track is not (yet) known to the registry
+   * Announced: The track is known, but not yet available yet (processing still ongoing)
+   * Available: The information about the track is available.
    
-class FlacTrackFS(LoggingMixIn, Operations):
+   """
+   def __init__(self, rwlock):
+      self.rwlock = rwlock
+      self.registry = {}
+      
+   def add(self, key, track_file):
+      with self.rwlock: 
+         self.registry[key] = (1, time.time(), track_file)
+
+   def is_unregistered(self, key):
+      """Is the track at the given key not yet registered?"""
+      with self.rwlock:
+         return key not in self.registry
+
+   def announce(self, key):
+      """Announce that a new track will get processed soon"""
+      with self.rwlock:
+         self.registry[key] = None
+
+   def is_announced(self, key):
+      """Is the track registered, but not yet processed?"""
+      with self.rwlock:
+         # default value "" for get ensures that we don't 
+         # treat unknown tracks as announced
+         return self.registry.get(key,"") is None
+
+   def is_registered(self, key):
+      with self.rwlock:
+         return isinstance(self.registry.get(key),tuple)
+         
+   def register_usage(self, key): return self._change_usage(key, +1)
+   def release_usage(self, key): return self._change_usage(key, -1)
+   def _change_usage(self, key, incr):
+      with self.rwlock:
+         (count, last_access, track_file) = self.registry[key]
+         result = (count+incr, time.time(), track_file)
+         self.registry[key] = result
+         return result
+         
+   def __getitem__(self, key):
+      with self.rwlock:
+         return self.registry[key]
+         
+   def get(self, key, default=None):
+      with self.rwlock:
+         return self.registry.get(key, default)
+         
+   def __delitem__(self, key):
+      with self.rwlock:
+         del self.registry[key]
+         
+      
+class FlacTrackFS(Operations):
+
    def __init__(self, root):
      self.root = realpath(root)
      self.rwlock = threading.RLock()
-     self._open_subtracks = {}
+     self.tracks = TrackRegistry(self.rwlock)
+     self._processed_tracks = {}
      self._last_positions = {}
      self._last_info = None
 
    def __call__(self, op, path, *args):
       return super(FlacTrackFS, self).__call__(op, self.root + path, *args)
 
-   def clean_path(self, path):
-      # Get a file path for the FLAC file from a FlacTrackFS path.
-      # Note that files accessed through FlacTrackFS will
-      # still read normally--we just need to trim off the song
-      # times.
-      if('.flaccuesplit.' in path):
-         splits = path.split('.flaccuesplit.')
-         times, extension = os.path.splitext(splits[1])
-         try:
-            # The extension should not parse as an int nor split into ints
-            # separated by :. If it does, we have no extension.
-            int(extension.split('_')[0])
-            extension = ''
-         except ValueError:
-            pass
-         path = splits[0] + extension
-      return path
-      
    def getattr(self, path, fh=None):
-      # If it's one of the FlacTrackFS paths, we need to adjust the file size to be
-      # appropriate for the shortened data.
-      
+      log.info(f"getattr for ({path}) [{fh}]")
       info = FilenameInfo.parse(path)
-      if(info.is_track):
-         try:
-            st = os.lstat(info.path)
-            toreturn = dict((key, getattr(st, key)) for key in (
-                            'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
-                            'st_nlink', 'st_size', 'st_uid'))
-            # Estimate the file size.
-            f = self.flac_info(info.path).meta()
-            toreturn['st_size'] = int((info.end - info.start).seconds() *
-                                      f.info.channels *
-                                      (f.info.bits_per_sample/8) *
-                                      f.info.sample_rate)
-            return toreturn
-         except:
-            import traceback
-            traceback.print_exc()
-      # Otherwise, just get the normal info.
-      path = self.clean_path(path)
-      st = os.lstat(path)
-      return dict((key, getattr(st, key)) for key in (
+      st = os.lstat(info.path)
+      result = dict((key, getattr(st, key)) for key in (
          'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
          'st_nlink', 'st_size', 'st_uid'))
+
+      if(info.is_track):
+         # If it's one of the FlacTrackFS track paths, 
+         # we need to adjust the file size to be roughly
+         # appropriate for the individual track.
+         f = self._flac_info(info.path).meta()
+         result['st_size'] = int((info.end - info.start).seconds() *
+                                   f.info.channels *
+                                   (f.info.bits_per_sample/8) *
+                                   f.info.sample_rate)
+      return result
 
    getxattr = None
 
    listxattr = None
 
-   def flac_info(self, path):
+   def _flac_info(self, path):
+      """Get FlacInfo for given path
+      
+      Reuse from cache if available
+      """
       with self.rwlock:
          if self._last_info is None or self._last_info.path != path:
             self._last_info = FlacInfo(path)
          return self._last_info
          
-   def is_new_track(self, path):
-      return path not in self._open_subtracks
-      
-   def announce_track(self, path):
-      self._open_subtracks[path] = None
-
-   def is_announced_track(self, path):
-      return self._open_subtracks[path] is None
-
-   def open_file(self, path, flags, *args, **pargs):
-      fh = os.open(path, flags, *args, **pargs)
-      print(f"open file [{fh}] {path}")
-      self._last_positions[fh] = 0
-      return fh
-      
-   def open_track(self, info, path, flags, *args, **pargs):
-     # Process the FLAC file to extract the track in a temp file
+   def _new_temp_filename(self):
       (fh,tempfile) = mkstemp()
+      # we don't want to process the file in python; just want a unique filename
+      # that we let flac write the track into
+      # => close right away
       os.close(fh)
-      fi = self.flac_info(info.path)
+      return tempfile
+      
+   def _extract_track(self, path, file_info):
+      """opens a virtual track file
+      
+      extracts the track from the underlying FLAC+CUE file into 
+      a temporary file and then opens the temporary file"""
+      log.info(f'open track "{path}"')
+      
+      trackfile = self._new_temp_filename()
+      
+      flac_info = self._flac_info(file_info.path)
+      
+      # extract picture from flac if available
+      picturefile = self._new_temp_filename()
+      metaflac_cmd = f'metaflac --export-picture-to="{picturefile}" "{file_info.path}"'
+      log.debug(f'extracting picture with command: "{metaflac_cmd}"')
+      rc = run(metaflac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+      picture_arg = ""
+      if rc == 0:
+         picture_arg =f' --picture="{picturefile}"'
+      
       flac_cmd = (
-         f'flac -d --silent --stdout --skip={info.start.flac_time()} --until={info.end.flac_time()} "{info.path}"'
-         f' | flac --silent -f --fast {fi.track_tags(info.num)} -o {tempfile} -'
+         f'flac -d --silent --stdout --skip={file_info.start.flac_time()} --until={file_info.end.flac_time()} "{file_info.path}"'
+         f' | flac --silent -f --fast {flac_info.track_tags(file_info.num)}{picture_arg} -o {trackfile} -'
       )
-      print(flac_cmd)
+      log.debug(f'extracting track with command: "{flac_cmd}"')
       rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+      os.remove(picturefile)
       with self.rwlock:
          if rc != 0:
+            log.error(f'failed to extract track #{num} from file "{file_info.path}"')
             # failed to create temporary flac file; return original file
-            os.remove(tempfile)
-            del self._open_subtracks[path]
-            return self.open_file(info.path, flags, *args, **pargs)
+            os.remove(trackfile)
+            del self.tracks[path]
+            return file_info.path
          else:
-            self._open_subtracks[path] = (1, time.time(), tempfile)
+            self.tracks.add(path, trackfile)
       
       def cleanup():
          still_in_use = True
          while still_in_use:
-            with self.rwlock:
-               (count, last_access, tempfile) = self._open_subtracks[path]
+            (count, last_access, trackfile) = self.tracks[path]
             if count <= 0 and (time.time() - last_access > 60):
                still_in_use = False
-            time.sleep(5)
-         print("delete track "+path)
-         with self.rwlock:
-            del self._open_subtracks[path]
-         os.remove(tempfile)
+            time.sleep(30)
+         log.debug(f'delete track "{path}"')
+         del self.tracks[path]
+         os.remove(trackfile)
       
-      print("open track "+path)
-      fh = self.open_file(tempfile, flags, *args, **pargs)
-      print(f"open track [{fh}] {path}\n  from {tempfile}")
       threading.Thread(target=cleanup).start()
-      return fh
+      return trackfile
    
-   def reopen_track(self, path, flags, *args, **pargs):
-      with self.rwlock:
-         # Update the stored info.
-         (count, last_access, tempfile) = self._open_subtracks[path]
-         self._open_subtracks[path] = (count+1, time.time(), tempfile)
-      # open the file once again
-      fh = self.open_file(tempfile, flags, *args, **pargs)
-      self._last_positions[fh] = 0
-      print(f"reopen track [{fh}] {path}")
-      return fh
-      
-   def release_track(self, path, fh):
-      with self.rwlock:
-         (count, last_access, tempfile) = self._open_subtracks[path]
-         self._open_subtracks[path] = (count-1, time.time(), tempfile)
-      print(f"release track [{fh}] {path}")
-      return os.close(fh)
-      
-   def open(self, path, flags, *args, **pargs):
-      # We don't want FlacTrackFS messing with actual data.
-      # Only allow Read-Only access.
-      if((flags | os.O_RDONLY) == 0):
-         raise ValueError('Can only open files read-only.')
-      # Handle the FlacTrackFS files.
+   def _file_to_open(self, path):
       info = FilenameInfo.parse(path)
       if info.is_track:
          ready_to_process = False
          while not ready_to_process:
             with self.rwlock:
-               if self.is_new_track(path):
+               if self.tracks.is_unregistered(path):
                   ready_to_process = True
-                  self.announce_track(path)
-               elif not self.is_announced_track(path):
-                  # if neither new nor announced then
-                  # we already have cached that track => reopen
-                  return self.reopen_track(path, flags, *args, **pargs)
+                  self.tracks.announce(path)
+               elif self.tracks.is_registered(path):
+                  # we already have cached that track => 
+                  # register additional usage
+                  return self.tracks.register_usage(path)[2] 
                   
             # give other thread time to finish processing
-            time.sleep(0.1)
+            time.sleep(0.5)
          
-         return self.open_track(info, path, flags, *args, **pargs)         
+         return self._extract_track(path, info)         
       else:
          # With any other file, just pass it along normally.
-         # This allows FLAC files to be read with a FlacTrackFS path.
-         # Note that you do not want to run this as root as this will
-         # give anyone read access to any file.
-         return self.open_file(path, flags, *args, **pargs)
-
+         return path
+         
+   def open(self, path, flags, *args, **pargs):
+      log.info(f'open file "{path}"')
+      # We don't want FlacTrackFS messing with actual data.
+      # Only allow Read-Only access.
+      if((flags | os.O_RDONLY) == 0):
+         raise ValueError('Can only open files read-only.')
+      realfile = self._file_to_open(path)
+      log.debug(f'file to open = "{realfile}"')
+      fh = os.open(realfile, flags, *args, **pargs)
+      self._last_positions[fh] = 0
+      return fh
+      
    def read(self, path, size, offset, fh):
-      print(f"read from [{fh}] {offset} until {offset+size}")
+      log.info(f"read from [{fh}] {offset} until {offset+size}")
       if self._last_positions[fh] != offset:
+         log.debug(f"out of band read; seek file to offset {offset}")
          os.lseek(fh, offset, 0)
       self._last_positions[fh] = offset+size
       return os.read(fh, size)
 
    def release(self, path, fh):
-      if FilenameInfo.parse(path).is_track:
-         return self.release_track(path, fh)
-      # Close the OS reference to the file.
+      log.info(f'release [{fh}] ({path})')
       del self._last_positions[fh]
+      if FilenameInfo.parse(path).is_track:
+         self.tracks.release_usage(path)
       return os.close(fh)
 
    def readdir(self, path, fh):
-      path = self.clean_path(path)
+      log.info(f'readdir [{fh}] ({path})')
+      path = FilenameInfo.parse(path).path
       entries = []
       for filename in os.listdir(path):
          basename, extension = os.path.splitext(filename)
-         if( extension == ".flac" ):
-            trx = self.flac_info(os.path.join(path, filename)).tracks()
+         if( extension == FilenameInfo.FLAC_EXTENSION ):
+            # TODO: handle flac files without cue
+            # TODO: handle "-keep-flac-cue" option
+            trx = self._flac_info(os.path.join(path, filename)).tracks()
             if trx:
                for t in trx:
-                  entries.append(FilenameInfo(filename, True, t.num, t.title, t.start, t.end).to_filename())
+                  entries.append(
+                     FilenameInfo(
+                        filename, 
+                        True, 
+                        t.num, 
+                        t.title, 
+                        t.start, 
+                        t.end
+                     ).to_filename())
             else:
                entries.append(filename)
          else:
@@ -613,11 +705,13 @@ class FlacTrackFS(LoggingMixIn, Operations):
       return ['.', '..'] + entries
 
    def readlink(self, path, *args, **pargs):
-      path = self.clean_path(path)
+      log.info(f'readlink ({path})')
+      path = FilenameInfo.parse(path).path
       return os.readlink(path, *args, **pargs)
 
    def statfs(self, path):
-      path = self.clean_path(path)
+      log.info(f'statfs ({path})')
+      path = FilenameInfo.parse(path).path
       stv = os.statvfs(path)
       return dict((key, getattr(stv, key)) for key in (
          'f_bavail', 'f_bfree', 'f_blocks', 'f_bsize', 'f_favail',
@@ -627,9 +721,12 @@ class FlacTrackFS(LoggingMixIn, Operations):
 
 if __name__ == '__main__':
    import argparse
+
    parser = argparse.ArgumentParser(
-      description='''Maps a directory to a new mount point while replacing all FLAC files with 
-embedded cue sheets will be replaced with multiple FLAC files for the individual tracks''')
+      description='''A FUSE filesystem for extracting individual tracks from FLAC+CUE files.
+      
+      Maps a directory to a mount point while replacing all FLAC files with 
+      embedded cue sheets with multiple FLAC files for the individual tracks''')
    parser.add_argument(
       '-s','--separator', nargs='?', dest='separator', default='.#-#.',
       help='The separator used inside the name of the track-files. Must never occur in regular filenames (default: ".#-#.")'
@@ -642,9 +739,17 @@ embedded cue sheets will be replaced with multiple FLAC files for the individual
       '-e','--extension', nargs='?', dest='extension', default='.flac',
       help='The file extension of FLAC files (default: ".flac")'
    )
+   # parser.add_argument(
+      # '-k', '--keep-flac-cue', dest='keep', action='store_true',
+      # help='Keep the source FLAC+CUE file in the mapped filesystem'
+   # )
    parser.add_argument(
-      '-k', '--keep-flac-cue', dest='keep', action='store_true',
-      help='Keep the source FLAC+CUE file in the mapped filesystem'
+      '-t', '--title-length', dest='title_length', default="20",
+      help='Nr. of characters of the track title in filename of track (default: 20)'
+   )
+   parser.add_argument(
+      '-d','--debug', dest='debug', action='store_true',
+      help='Activate debug logging'
    )
    parser.add_argument(
       'root', 
@@ -656,10 +761,13 @@ embedded cue sheets will be replaced with multiple FLAC files for the individual
    )
    args = parser.parse_args()
 
-   print(args)
-   IGNORE_TAGS_REX = re.compile(args.ignore)
-   FilenameInfo.create_regex(args.separator, args.extension, 20)
+   if args.debug: 
+      logging.basicConfig(level=logging.DEBUG)
+      log.setLevel(logging.DEBUG)
+      
+   
+   FilenameInfo.init(args.separator, args.extension, int(args.title_length))
+   FlacInfo.init(args.ignore)
 
-   #logging.basicConfig(level=logging.DEBUG)
    fuse = FUSE(
       FlacTrackFS(args.root), args.mount, foreground=True, allow_other=True)
