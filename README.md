@@ -137,7 +137,7 @@ There are a few ideas for additional improvements
 Troubleshooting
 ---------------
 
-When `trackfs` doesn't get properly terminated, then your system might still have a orphaned mount point. When you then restart `trackfs` this will fail with a corresponding error message.
+When `trackfs` doesn't get properly terminated, then your system might still have an orphaned mount point. When you then restart `trackfs` this will fail with a corresponding error message.
 
 In that case you have to first unmount the orphaned mount point by calling:
 
