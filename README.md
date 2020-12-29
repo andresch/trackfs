@@ -141,17 +141,23 @@ When `trackfs` doesn't get properly terminated, then your system might still hav
 
 In that case you have to first unmount the orphaned mount point by calling:
 
-   ```sudo umount /path/to/yourmountpoint```
+```
+sudo umount /path/to/yourmountpoint
+```
    
 In case the path to your mountpoint contains a symbolic link the above might not work as `umount` expects the _real_ path of the mount point. In that case use
 
-	```mount -t fuse```
+```
+mount -t fuse
+```
 
 to find the path that `umount` expects.
 
 In case `trackfs` hangs (should not happen, but just in case) you might have to explicitly kill it. For that first find the id of the `trackfs` container (using [`docker ps`](https://docs.docker.com/engine/reference/commandline/ps/) and the kill the container (using [`docker kill`](https://docs.docker.com/engine/reference/commandline/kill/). When you have to do this, then usually also the FUSE mountpoint is still dangling around and you have to manually unmount is. You can wire all this up in a single command:
 
-	```docker ps | grep 'andresch/trackfs' | awk '{print $1}' | xargs docker kill ; sudo umount "/path/to/yourmountpoint```
+```
+docker ps | grep 'andresch/trackfs' | awk '{print $1}' | xargs docker kill ; sudo umount "/path/to/yourmountpoint"
+```
 	
 Acknowledgments
 ---------------
