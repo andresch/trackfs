@@ -19,11 +19,12 @@ import string
 import threading
 import math
 import unicodedata
+import signal
 
 from os.path import realpath
 
 import sys
-sys.path.insert(0, '.')
+#sys.path.insert(0, '.')
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 from tempfile import mkstemp
@@ -530,7 +531,7 @@ class TrackRegistry():
 class FlacSplitException(Exception):
    pass
 
-class FlacTrackFS(Operations):
+class TrackFS(Operations):
 
    def __init__(self, root, keep_flac=False):
      self.root = realpath(root)
@@ -542,7 +543,7 @@ class FlacTrackFS(Operations):
      self._last_info = None
 
    def __call__(self, op, path, *args):
-      return super(FlacTrackFS, self).__call__(op, self.root + path, *args)
+      return super(TrackFS, self).__call__(op, self.root + path, *args)
 
    def getattr(self, path, fh=None):
       log.info(f"getattr for ({path}) [{fh}]")
@@ -618,7 +619,7 @@ class FlacTrackFS(Operations):
             log.error(err_msg)
             os.remove(trackfile)
             del self.tracks[path]
-            raise FlacSplitExeption(err_msg)
+            raise FlacSplitException(err_msg)
          else:
             self.tracks.add(path, trackfile)
       
@@ -726,8 +727,6 @@ class FlacTrackFS(Operations):
          'f_bavail', 'f_bfree', 'f_blocks', 'f_bsize', 'f_favail',
          'f_ffree', 'f_files', 'f_flag', 'f_frsize', 'f_namemax'))
 
-
-
 if __name__ == '__main__':
    import argparse
 
@@ -793,6 +792,6 @@ If you are absolutely sure that that's what you want, use the option "--root-all
       
    FilenameInfo.init(args.separator, args.extension, int(args.title_length))
    FlacInfo.init(args.ignore)
-
-   fuse = FUSE(
-      FlacTrackFS(args.root, args.keep), args.mount, foreground=True, allow_other=True)
+   trackfs = TrackFS(args.root, args.keep)
+   
+   fuse = FUSE(trackfs, args.mount, foreground=True, allow_other=True)

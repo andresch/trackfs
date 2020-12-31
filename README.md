@@ -16,7 +16,8 @@ You can directly run `trackfs` on any Linux system with Docker and FUSE installe
 The simplest way to get familiar with `trackfs` is to just launch it from the command-line:
 
 ```
-docker run -ti --rm \
+docker run --rm \
+    --name=trackfs \
     --device /dev/fuse \
     --cap-add SYS_ADMIN \
     --security-opt apparmor:unconfined \
@@ -38,12 +39,11 @@ While the tracks can be used like regular files, they don't exist in the physica
 
 In case you're not familiar with docker, a quick explanation on the used docker arguments:
 
-* `-ti`: Attach input and output of the docker container to your terminal
-* `--rm`: Remove the docker container implicitly after termination
-* `--device`, `--cap-add` `--security-opt`: By default docker containers don't have sufficient privileges to mount FUSE file systems. With those arguments to grant the docker container the minimal privileges required to do this.
 * `-v /path/to/yourmusiclibrary:/src:ro`: make your music library accessible for trackfs by mounting it to /src in read-only mode inside your docker container
 * `-v /path/to/yourmountpoint:/dst:rshared`: share the trackfs filesystem (`/dst` inside the container) accessible under your mount point
 * `andresch/trackfs`: the name of the `trackfs` docker image on docker hub.
+* `--device`, `--cap-add` `--security-opt`: With those arguments you grant the docker container the privileges required to mount FUSE filesystems. You can try to leave out the `--security-opt` option as it is not required on all systems. There is [onging discussion](https://github.com/docker/for-linux/issues/321) if docker containers should allow mounting FUSE filesystems, by just using the `--device` option, but for now this is not the case.
+* `--rm`: remove the orphaned container after termination
 
 Please refer to the [docker run documentation](https://docs.docker.com/engine/reference/commandline/run/) for more details.
 
@@ -55,23 +55,25 @@ Instead it is recommended to let `trackfs` run as a regular user. For that to wo
 - Make sure that in your host system the file `/etc/fuse.conf` has the option `user_allow_other` enabled, e.g. by calling from your command line 
   ```sudo echo "user_allow_other" >> /etc/fuse.conf```
 - Make sure that your mount point already exists and is owned by the user that is supposed to run `trackfs`.
-- Tell `trackfs` which user to use by setting the docker environment variable `TRACKFS_UID`
+- Use the docker run option `--user` to define the user that will run `trackfs` 
+
   E.g. the following docker command would run `trackfs` with the current user:
 
   ```
-  docker run -ti --rm \
+  docker run --rm \
+    --name=trackfs \
     --device /dev/fuse \
     --cap-add SYS_ADMIN \
     --security-opt apparmor:unconfined \
-    --env FTFS_UID=`id -u`
+    --user $(id -u):$(id -g) \
     -v /path/to/yourmusiclibrary:/src:ro \
     -v /path/to/yourmountpoint:/dst:rshared \
     andresch/trackfs 
   ```
 
-### Additional `trackfs` options
+### All `trackfs` options
 
-`trackfs` provides a few additional options that allow you to tweak its default behavior: 
+`trackfs` provides a few options that allow you to tweak its default behavior: 
 
 * `-e EXTENSION`, `--extension EXTENSION` (default: ".flac") : 
   The file extension of FLAC files in the music library 
@@ -118,7 +120,7 @@ Making `trackfs` available as regular python package that you can install via pi
 For the time being you need to manually install `trackfs` and its dependencies:
 * Make sure that you have installed the corresponding packages for python3, pip, fuse, fuse-dev and flac installed from your Linux distribution
 * Install the additional python package dependencies with `pip install mutagen fusepy Lark`
-* Download [trackfs.py](https://raw.githubusercontent.com/andresch/trackfs/trackfs.py), make it executable (`chmod +x trackfs.py`)
+* Download [trackfs.py](https://raw.githubusercontent.com/andresch/trackfs/trackfs.py) and make it executable (`chmod +x trackfs.py`)
 
 Status
 ------
@@ -153,10 +155,18 @@ mount -t fuse
 
 to find the path that `umount` expects.
 
-In case `trackfs` hangs (should not happen, but just in case) you might have to explicitly kill it. For that first find the id of the `trackfs` container (using [`docker ps`](https://docs.docker.com/engine/reference/commandline/ps/) and the kill the container (using [`docker kill`](https://docs.docker.com/engine/reference/commandline/kill/). When you have to do this, then usually also the FUSE mountpoint is still dangling around and you have to manually unmount is. You can wire all this up in a single command:
+In case `trackfs` hangs (should not happen, but just in case) you might have to explicitly kill it. For that we use the `docker stop` command (which give the container a chance to currently shutdown before killing it). This requires the container name or container id as parameter.
+
+If you have defined a container name (e.g. to "trackfs") you can just use
 
 ```
-docker ps | grep 'andresch/trackfs' | awk '{print $1}' | xargs docker kill ; sudo umount "/path/to/yourmountpoint"
+docker stop trackfs
+```
+
+otherwise your first have to find the id of the container that runs the andresch/trackfs image:
+
+```
+docker stop $(docker ps | awk '/andresch\/trackfs/{print $1}')
 ```
 	
 Acknowledgments

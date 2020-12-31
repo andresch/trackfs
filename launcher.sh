@@ -7,14 +7,15 @@
 # See https://github.com/andresch/trackfs for details.
 #
 
-FUSE_LIBRARY_PATH=/usr/lib/libfuse.so
-export FUSE_LIBRARY_PATH
-if test -z "$TRACKFS_UID"; then
-	echo "No environment variable \$TRACKFS_UID defined. Launching directly"
-	/usr/bin/trackfs.py $@
-else
-	deluser trackfs
-	adduser -S -H -D -u $TRACKFS_UID trackfs
-	cmd="/usr/bin/trackfs.py $@"
-	su -s "/bin/sh" trackfs -c "$cmd"
+# make sure the current user has an entry in /etc/passwd
+# otherwise fusermount will not be able to mount FUSE fs
+# so unless the current user already has an entry in /etc/passwd
+# we add a fake user "trackfs" with uid and gid of current user
+my_uid="$(id -u)"
+if ! getent passwd "${my_uid}" >/dev/null; then
+	echo "trackfs:x:${my_uid}:$(id -g)::/tmp:/sbin/nologin" >> /etc/passwd
 fi
+
+# start trackfs
+export FUSE_LIBRARY_PATH=/usr/lib/libfuse.so
+exec /usr/local/bin/trackfs.py $@
