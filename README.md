@@ -115,7 +115,7 @@ In case the FLAC+CUE file contains pictures, the first picture will be available
 Manual Installation
 -------------------
 
-In case you want/have to run `trackfs` on some linux system without docker you can also install the python package `trackfs` manually. Please refer to the [homepage of the trackfs python package]() for further information. 
+In case you want/have to run `trackfs` on some linux system without docker you can also install the python package `trackfs` manually. Please refer to the [homepage of the trackfs python package](https://pypi.org/project/trackfs/) for further information. 
 
 Status
 ------
