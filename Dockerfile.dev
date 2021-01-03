@@ -1,5 +1,5 @@
 # =================================
-# Dockerfile for trackfs
+# Dockerfile for trackfs development
 # 
 # Copyright 2020 by Andreas Schmidt
 # All rights reserved.
@@ -11,11 +11,10 @@
 
 FROM docker.io/python:3.8-alpine as builder
 
-# install dependencies  
 RUN \
-  apk --no-cache add fuse fuse-dev flac \
+  apk add --no-cache gcc musl-dev libffi-dev openssl-dev fuse fuse-dev flac \
   && /usr/local/bin/python -m pip install --upgrade pip \
-  && pip install trackfs
+  && pip install --upgrade setuptools wheel twine mutagen fusepy Lark
 
 # enable non-root users to make FUSE fs non-private
 RUN echo "user_allow_other" >> /etc/fuse.conf 
@@ -40,9 +39,13 @@ VOLUME /src
 # mount point where to generate the tracks from the flac+cue files
 VOLUME /dst
 
-COPY launcher.sh /usr/local/bin/
-RUN chmod 555 /usr/local/bin/launcher.sh
+# mount project directoy into docker
+VOLUME /work
 
-ENTRYPOINT ["/usr/local/bin/launcher.sh", "/src", "/dst"]
+# copy launch script
+COPY dev-launcher.sh /usr/local/bin/
+RUN chmod 555 /usr/local/bin/dev-launcher.sh
+
+ENTRYPOINT ["/usr/local/bin/dev-launcher.sh"]
 
 

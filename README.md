@@ -27,13 +27,13 @@ docker run --rm \
     --root-allowed
 ```
 
-Replace `/path/to/yourmusiclibrary` with the root directory where `trackfs` can find your FLAC+CUE files and `/path/to/yourmountpoint` with the directory that you want to use as mount point for the `trackfs`-filesystem. Ideally the mount point already exists, if not, docker will create the directory (but then with root as owner)
+Replace `/path/to/yourmusiclibrary` with the root directory where `trackfs` scans for your FLAC+CUE files and `/path/to/yourmountpoint` with the directory that you want to use as mount point for the `trackfs`-filesystem. Ideally the mount point already exists, if not, docker will create the directory (but then with root as owner)
 
-Once started you will find all directories and files from your music library also in the `trackfs`-filesystem. Only FLAC+CUE files will get replaces: Instead of a single FLAC+CUE file you will find individual FLAC files for each track found in the embedded cue sheet. The track-files will have the following names:
+Once started you will find all directories and files from your music library also in the `trackfs`-filesystem. Only FLAC+CUE files got replaced: Instead of a single FLAC+CUE file you will find individual FLAC files for each track found in the embedded cue sheet. The track-files will have the following names:
 
     {basename(FLAC+CUE-file)}.#-#.{tracknumber}.{track-title}.{start}-{end}.flac
 
-While the tracks can be used like regular files, they don't exist in the physical file system on your machine. Instead `trackfs` creates them on the fly whenever an application starts loading any of the files. This usually takes (depending on your system) a few seconds.
+While the tracks can be used like regular files, they don't exist in the physical file system on your machine. Instead `trackfs` creates them on the fly whenever an application starts loading any of the track files. This usually takes (depending on your system) a few seconds.
 
 #### Docker arguments
 
@@ -115,12 +115,7 @@ In case the FLAC+CUE file contains pictures, the first picture will be available
 Manual Installation
 -------------------
 
-Making `trackfs` available as regular python package that you can install via pip is currently in preparation.
-
-For the time being you need to manually install `trackfs` and its dependencies:
-* Make sure that you have installed the corresponding packages for python3, pip, fuse, fuse-dev and flac installed from your Linux distribution
-* Install the additional python package dependencies with `pip install mutagen fusepy Lark`
-* Download [trackfs.py](https://raw.githubusercontent.com/andresch/trackfs/trackfs.py) and make it executable (`chmod +x trackfs.py`)
+In case you want/have to run `trackfs` on some linux system without docker you can also install the python package `trackfs` manually. Please refer to the [homepage of the trackfs python package]() for further information. 
 
 Status
 ------
