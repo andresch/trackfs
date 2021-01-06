@@ -8,7 +8,7 @@
 
 #
 # A few useful commands within the dev-docker container of trackfs
-# the dev-launcher will make this file ~/.shrc
+# the dev-launcher will load this file
 #
 
 thelp () {
