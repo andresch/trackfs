@@ -5,3 +5,6 @@ __pycache__/
 
 # make sure the pypi credentials don't go into git
 .pypirc
+# neither should any local development configurations
+/.idea/
+/venv/

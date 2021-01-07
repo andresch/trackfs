@@ -99,9 +99,14 @@ class TrackFSOps(Operations):
       
     def read(self, path, size, offset, fh):
         log.info(f"read from [{fh}] {offset} until {offset+size}")
+        fusepath = self._fusepath(path)
         if self._last_positions[fh] != offset:
             log.debug(f"out of band read; seek file to offset {offset}")
             os.lseek(fh, offset, 0)
+        else:
+            # we do preload-checks only on consecutive reads
+            if fusepath.is_track:
+                self.tracks.check_next_track(path, fusepath, offset)
         self._last_positions[fh] = offset+size
         return os.read(fh, size)
 

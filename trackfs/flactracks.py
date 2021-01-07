@@ -14,8 +14,10 @@ import threading
 from dataclasses import dataclass
 from tempfile import mkstemp
 from subprocess import DEVNULL, run
+from concurrent.futures import ThreadPoolExecutor
 
 from . import flacinfo
+from . import fusepath
 
 import logging
 log = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ class TrackInfo():
     ref_count               : int   = 1
     last_accessed           : float = time.time()
     
-    
+
 class TrackManager():
     """Keeps track of all individual tracks that currently get processed
 
@@ -38,9 +40,20 @@ class TrackManager():
     * Available: The information about the track is available.
 
     """
+
+    DEFAULT_TEMPFILE_TTL        = 60
+    # We should keep the lead time big enough, as the calculation of the 
+    # remaining track time is based on percentage of file-size
+    DEFAULT_PRELOAD_LEAD_TIME   = DEFAULT_TEMPFILE_TTL / 2
+    
+
     def __init__(self):
         self.rwlock = threading.RLock()
         self.registry = {}
+        self.preload_pool = ThreadPoolExecutor(max_workers=2)
+        self.preloaded = {}
+        self.preload_lead_time = TrackManager.DEFAULT_PRELOAD_LEAD_TIME
+        self.tempfile_ttl = TrackManager.DEFAULT_TEMPFILE_TTL
       
     def _add(self, key, track_file):
         with self.rwlock: 
@@ -51,10 +64,10 @@ class TrackManager():
             while still_in_use:
                 with self.rwlock:
                     info = self.registry[key]
-                if info.ref_count <= 0 and (time.time() - info.last_accessed > 60):
+                if info.ref_count <= 0 and (time.time() - info.last_accessed > self.tempfile_ttl):
                    still_in_use = False
                 else:
-                    time.sleep(30)
+                    time.sleep(self.tempfile_ttl / 2)
             log.debug(f'delete track "{key}"')
             del self.registry[key]
             os.remove(info.temp_file_path)
@@ -154,8 +167,11 @@ class TrackManager():
         return trackfile
    
     def prepare_track(self, path, fusepath):
+        log.info(f'prepare track "{path}"')
         assert fusepath.is_track
         ready_to_process = False
+        with self.rwlock:
+            self.preloaded[path] = False
         while not ready_to_process:
             with self.rwlock:
                 if self._is_unregistered(path):
@@ -168,9 +184,65 @@ class TrackManager():
               
             # give other thread time to finish processing
             time.sleep(0.5)
-     
-        return self._extract_track(path, fusepath)         
+        return self._extract_track(path, fusepath)
          
     def release_track(self, path, fusepath):
+        log.info(f'release track "{path}"')
         assert fusepath.is_track
-        self._change_usage(path, -1)
+        if self._change_usage(path, -1).ref_count == 0:
+            log.debug(f'remove preloaded flag for "{path}"')
+            with self.rwlock:
+                del self.preloaded[path]
+           
+    
+    def _find_this_and_next_track(self, flac_info: flacinfo.FlacInfo, num: int):
+        log.info(f'checking for subsequent track "{num}"')
+        tracks = flac_info.tracks()
+        if tracks is not None:
+            total_tracks = len(tracks)
+            track = None
+            found = False
+            i = num-1
+            while (not found) and (i<total_tracks):
+                track = tracks[i]
+                found = track.num == num
+                i+=1
+            return (track, tracks[i] if i<total_tracks else None)
+        else:
+            log.warn('could not find any tracks')
+            return (None, None)
+
+    def _do_check_next_track(self, path, fusepath, offset):
+        log.info(f'_do_check_next_track: "{path}" [{offset}]')
+        
+        duration = (fusepath.end - fusepath.start).seconds()
+        fsize = os.stat(self[path].temp_file_path).st_size
+        if (1.0 - (float(offset) / float(fsize)))*duration > self.preload_lead_time:
+            log.debug(f'more than ~{self.preload_lead_time} seconds to play; no preload')
+            return
+            
+        flac_info = flacinfo.get(fusepath.source)
+        (track, next_track) = self._find_this_and_next_track(flac_info, fusepath.num)
+        if next_track is None:
+            log.debug(f'got last track: "{fusepath.num}"; no preload')
+            return
+        with self.rwlock:
+            self.preloaded[path] = True
+            
+        log.debug(f'preloading next track "{next_track.num}"')
+        next_fusepath = fusepath.for_other_track(
+            next_track.num, next_track.title, next_track.start, next_track.end,
+        )
+        self.prepare_track(next_fusepath.vpath, next_fusepath)
+        # we just want to keep the file in the cache, but not mark it as "open"
+        self.release_track(next_fusepath.vpath, next_fusepath)
+
+    def check_next_track(self, path, fusepath, offset):
+        assert fusepath.is_track
+        with self.rwlock:
+            if self.preloaded.get(path, False):
+                log.debug(f'is already preloaded: "{path}"')
+                return
+        self.preload_pool.submit(self._do_check_next_track, path, fusepath, offset)
+
+    
