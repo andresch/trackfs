@@ -104,5 +104,5 @@ def init(ignore):
     FlacInfo.IGNORE_TAGS_REX = re.compile(ignore)
 
 @lru_cache(maxsize=5)
-def get(path):
+def get(path) -> FlacInfo:
     return FlacInfo(path)

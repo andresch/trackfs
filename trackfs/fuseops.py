@@ -13,8 +13,8 @@
 from __future__ import print_function, absolute_import, division
 
 import os
-import time
-import threading
+from dataclasses import dataclass
+from threading import RLock
 
 from fuse import Operations
 
@@ -27,6 +27,11 @@ log = logging.getLogger(__name__)
 
 class FlacSplitException(Exception):
    pass
+
+@dataclass
+class OpenFileInfo():
+    position    : int = 0
+    lock        : RLock = RLock()
 
 class TrackFSOps(Operations):
 
@@ -41,7 +46,7 @@ class TrackFSOps(Operations):
         self.root = os.path.realpath(root)
         self.keep_flac = keep_flac
         self.tracks = TrackManager()
-        self._last_positions = {}
+        self._open_files = {}
         self._fusepath_factory = fusepath.Factory(
             track_separator         = separator,
             max_title_len           = title_length,
@@ -70,13 +75,8 @@ class TrackFSOps(Operations):
             # If it's one of the FlacTrackFS track paths, 
             # we need to adjust the file size to be roughly
             # appropriate for the individual track.
-            f = flacinfo.get(fusepath.source).meta
-            result['st_size'] = int(
-                (fusepath.end - fusepath.start).seconds() 
-                * f.info.channels 
-                * (f.info.bits_per_sample/8) 
-                * f.info.sample_rate
-            )
+            result['st_size'] = self.tracks.estimate_track_file_size(path, fusepath)
+
         return result
 
     getxattr = None
@@ -94,25 +94,29 @@ class TrackFSOps(Operations):
             path = self.tracks.prepare_track(path, fusepath)
         log.debug(f'file to open = "{path}"')
         fh = os.open(path, flags, *args, **pargs)
-        self._last_positions[fh] = 0
+        self._open_files[fh] = OpenFileInfo()
+        log.debug(f'opened file file to open = "{path}" with fh [{fh}]')
         return fh
       
     def read(self, path, size, offset, fh):
         log.info(f"read from [{fh}] {offset} until {offset+size}")
-        fusepath = self._fusepath(path)
-        if self._last_positions[fh] != offset:
-            log.debug(f"out of band read; seek file to offset {offset}")
-            os.lseek(fh, offset, 0)
-        else:
-            # we do preload-checks only on consecutive reads
-            if fusepath.is_track:
-                self.tracks.check_next_track(path, fusepath, offset)
-        self._last_positions[fh] = offset+size
-        return os.read(fh, size)
+        open_file_info = self._open_files[fh]
+        # make sure that only one concurrent read per file handle is possible
+        with open_file_info.lock:
+            if open_file_info.position != offset:
+                log.debug(f"out of band read; seek file to offset {offset}")
+                os.lseek(fh, offset, 0)
+            else:
+                # we do preload-checks only on consecutive reads
+                fusepath = self._fusepath(path)
+                if fusepath.is_track:
+                    self.tracks.check_next_track(path, fusepath, offset)
+            open_file_info.position = offset + size
+            return os.read(fh, size)
 
     def release(self, path, fh):
         log.info(f'release [{fh}] ({path})')
-        del self._last_positions[fh]
+        del self._open_files[fh]
         fusepath = self._fusepath(path)
         if fusepath.is_track:
             self.tracks.release_track(path, fusepath)

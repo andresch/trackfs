@@ -31,7 +31,7 @@ setuptools.setup(
         "Operating System :: POSIX",
     ],
     python_requires='>=3.8',
-    entry_points = {
+    entry_points={
       'console_scripts': [
          'trackfs=trackfs.__init__:main'
       ],

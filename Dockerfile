@@ -14,8 +14,7 @@ FROM docker.io/python:3.8-alpine as builder
 # install dependencies  
 RUN \
   apk --no-cache add fuse fuse-dev flac \
-  && /usr/local/bin/python -m pip install --upgrade pip \
-  && pip install trackfs
+  && /usr/local/bin/python -m pip install --upgrade pip
 
 # enable non-root users to make FUSE fs non-private
 RUN echo "user_allow_other" >> /etc/fuse.conf 
@@ -33,6 +32,13 @@ RUN echo "user_allow_other" >> /etc/fuse.conf
 # even if some attacker finds a way to take over the container
 
 RUN chmod 666 /etc/passwd 
+
+# Ensure that we get a docker image cache invalidation when there's new content available
+ADD https://api.github.com/repos/andresch/trackfs/compare/master...HEAD /dev/null
+
+# Now install the latest trackfs version from pypi
+RUN \
+  pip install trackfs
 
 # source directory containing flac+cue files
 VOLUME /src

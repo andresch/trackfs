@@ -4,7 +4,8 @@ __pycache__/
 *$py.class
 
 # make sure the pypi credentials don't go into git
-.pypirc
+/.pypirc
 # neither should any local development configurations
 /.idea/
 /venv/
+/.cheatsheet
