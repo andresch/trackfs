@@ -150,3 +150,11 @@ class FusePath():
                 entries.append(filename)
         log.debug(f'vdir entries:{entries}')
         return entries
+
+    def for_other_track(self, num: int, title: str, start: cuesheet.Time, end: cuesheet.Time):
+        '''Construct fusepath entry for another track of the same FLAC+CUE file'''
+        return FusePath(
+            self.source_root, self.extension, True,
+            num, title, start, end,
+            self._factory
+        )
