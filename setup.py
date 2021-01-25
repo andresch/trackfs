@@ -8,16 +8,18 @@
 
 import setuptools
 
-with open("README.py.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+def slurp(fn):
+    with open(fn, "r", encoding="utf-8") as fh:
+        return fh.read()
+
 
 setuptools.setup(
     name="trackfs",
-    version="0.1.2",
+    version=slurp("VERSION"),
     author="Andreas Schmidt",
     author_email="author@example.com",
     description="A read-only FUSE filesystem that splits FLAC+CUE files into individual FLAC files per track",
-    long_description=long_description,
+    long_description=slurp("README.py.md"),
     long_description_content_type="text/markdown",
     url="https://github.com/andresch/trackfs",
     packages=setuptools.find_packages(),

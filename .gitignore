@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# ignore any setup files
+/*.egg-info
+
 # make sure the pypi credentials don't go into git
 /.pypirc
 # neither should any local development configurations

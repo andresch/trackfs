@@ -30,11 +30,17 @@ def main(foreground=True, allow_other=True):
         embedded cue sheets) with multiple FLAC files for the individual tracks''')
     parser.add_argument(
         '-s', '--separator', dest='separator', default=fusepath.DEFAULT_TRACK_SEPARATOR,
-        help=f'The separator used inside the name of the track-files. Must never occur in regular filenames (default: "{fusepath.DEFAULT_TRACK_SEPARATOR}")'
+        help=(
+            f'The separator used inside the name of the track-files. '
+            f'Must never occur in regular filenames (default: "{fusepath.DEFAULT_TRACK_SEPARATOR}")'
+        )
     )
     parser.add_argument(
         '-i', '--ignore-tags', dest='ignore', default='CUE_TRACK.*|COMMENT',
-        help='A regular expression for tags in the FLAC file that will not be copied to the track FLACs (default: "CUE_TRACK.*|COMMENT")'
+        help=(
+            'A regular expression for tags in the FLAC file that will not be '
+            'copied to the track FLACs (default: "CUE_TRACK.*|COMMENT")'
+        )
     )
     parser.add_argument(
         '-e', '--extension', dest='extension', default=fusepath.DEFAULT_FLAC_EXTENSION,
@@ -50,7 +56,10 @@ def main(foreground=True, allow_other=True):
     )
     parser.add_argument(
         '--root-allowed', dest='rootok', action='store_true',
-        help='Allow running as with root permissions; Neither necessary nor recommended. Use only when you know what you are doing'
+        help=(
+            'Allow running as with root permissions; Neither necessary nor recommended. '
+            'Use only when you know what you are doing'
+        )
     )
     parser.add_argument(
         '-v', '--verbose', dest='verbose', action='store_true',
@@ -80,7 +89,7 @@ def main(foreground=True, allow_other=True):
 
     if os.geteuid() == 0 and not args.rootok:
         print(
-            f'''By default {os.path.basename(__file__)} don't allow to run with root permissions. 
+            f'''By default {os.path.basename(sys.argv[0])} don't allow to run with root permissions. 
      
 If you are absolutely sure that that's what you want, use the option "--root-allowed"''',
             file=sys.stderr
