@@ -35,23 +35,27 @@ class FlacInfo():
     def _cue_from_external_file(self):
         (base, ext) = os.path.splitext(self.path)
         cue_path = base + ".cue"
-        if not os.path.exists():
+        if not os.path.exists(cue_path):
             return None
         log.debug(f"found accompanying cue sheet")
         with open(cue_path, "r", encoding="utf-8") as fh:
-            return fh.read()
+            result = fh.read()
+        log.debug(f"cue-sheet:\n{result}")
+        return result
 
     @cached_property
     def cue(self):
         meta = self.meta
-        raw_cue = meta.tags.get('CUESHEET', "")
+        raw_cue = meta.tags.get('CUESHEET', [])
         if len(raw_cue) == 0:
             log.debug(f"regular flac file without cue sheet")
             raw_cue = self._cue_from_external_file()
             if raw_cue is None:
                 return None
+        else:
+            raw_cue =raw_cue[0]
         log.debug(f"raw cue sheet from FLAC file:\n{raw_cue}")
-        result = cuesheet.parse(raw_cue[0], meta.info.length)
+        result = cuesheet.parse(raw_cue, meta.info.length)
         log.debug(f"parsed cue sheet from FLAC file:\n{result}")
         return result
 
