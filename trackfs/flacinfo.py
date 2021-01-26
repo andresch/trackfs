@@ -12,6 +12,7 @@ import os
 from functools import lru_cache, cached_property
 
 from mutagen.flac import FLAC
+import chardet
 
 from . import cuesheet
 
@@ -38,10 +39,11 @@ class FlacInfo():
         if not os.path.exists(cue_path):
             return None
         log.debug(f"found accompanying cue sheet")
-        with open(cue_path, "r", encoding="utf-8") as fh:
-            result = fh.read()
-        log.debug(f"cue-sheet:\n{result}")
-        return result
+        with open(cue_path, "rb") as fh:
+            cue_bytes = fh.read()
+        cue_str = cue_bytes.decode(chardet.detect(cue_bytes)['encoding'])
+        log.debug(f"cue-sheet:\n{cue_str}")
+        return cue_str
 
     @cached_property
     def cue(self):
