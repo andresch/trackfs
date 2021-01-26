@@ -14,7 +14,9 @@ FROM docker.io/python:3.8-alpine as builder
 RUN \
   apk add --no-cache gcc musl-dev libffi-dev openssl-dev fuse fuse-dev flac \
   && /usr/local/bin/python -m pip install --upgrade pip \
-  && pip install --upgrade setuptools wheel twine mutagen fusepy Lark
+  && pip install --upgrade setuptools wheel twine
+
+RUN pip install --upgrade mutagen fusepy Lark chardet
 
 # enable non-root users to make FUSE fs non-private
 RUN echo "user_allow_other" >> /etc/fuse.conf 
@@ -39,7 +41,7 @@ VOLUME /src
 # mount point where to generate the tracks from the flac+cue files
 VOLUME /dst
 
-# mount project directoy into docker
+# mount project directory into docker
 VOLUME /work
 
 # copy launch script
