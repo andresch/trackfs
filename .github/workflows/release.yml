@@ -13,11 +13,9 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     env:
-      NEW_LINE: |+
+      MSG_SEPARATOR: |+
 
-        *
-        *
-        *
+        ___
 
     steps:
       - name: Checkout code
@@ -39,7 +37,7 @@ jobs:
 #              sha: context.sha
 #            })
       - name: print message
-        run: echo "${{ join( github.event.commits.*.message, env.NEW_LINE ) }}"
+        run: echo "${{ join( github.event.commits.*.message, env.MSG_SEPARATOR ) }}"
       - name: Create Release
         id: create_release
         if: env.NEW_VERSION != ''
@@ -49,6 +47,6 @@ jobs:
         with:
           tag_name: ${{ env.NEW_VERSION }}
           release_name: ${{ env.NEW_VERSION }}
-          body: ${{ join( github.event.commits.*.message, env.NEW_LINE ) }}
+          body: ${{ join( github.event.commits.*.message, env.MSG_SEPARATOR ) }}
           draft: false
           prerelease: false
