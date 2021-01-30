@@ -12,6 +12,12 @@ jobs:
   build:
     name: Create Release
     runs-on: ubuntu-latest
+    env:
+      NEW_LINE: |+
+
+        *
+        *
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -32,7 +38,7 @@ jobs:
 #              sha: context.sha
 #            })
       - name: print message
-        run: echo "${{ join( github.event.commits.*.message, %0A ) }}"
+        run: echo "${{ join( github.event.commits.*.message, env.NEW_LINE ) }}"
       - name: Create Release
         id: create_release
         if: env.NEW_VERSION != ''
@@ -42,6 +48,6 @@ jobs:
         with:
           tag_name: ${{ env.NEW_VERSION }}
           release_name: ${{ env.NEW_VERSION }}
-          body: ${{ join( github.event.commits.*.message, '; ') }}
+          body: ${{ join( github.event.commits.*.message, env.NEW_LINE ) }}
           draft: false
           prerelease: false
