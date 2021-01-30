@@ -15,23 +15,31 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-      - name : Verify new version
-        run: if git tag | grep -q $( cat VERSION ); then echo "NEW_RELEASE=true" >> $GITHUB_ENV ; else echo "no match"; fi
-      - name: Test For now old version
-        if: ${{ env.NEW_RELEASE != 'true' }}
-        run:  echo 'No new version -> no new release'
-      - name: Test For now new version
-        if: ${{ env.NEW_RELEASE == 'true' }}
-        run:  echo 'new version -> new release'
+      - name : Check for new version
+        run: |
+          VERSION=v$( cat VERSION )
+          if git tag --list | grep -q ${VERSION}; then echo "NEW_VERSION=${VERSION}" >> $GITHUB_ENV ; else echo "no match"; fi
+#      - name: Create tag for new version
+#        if: env.NEW_VERSION != ''
+#        uses: actions/github-script@v3
+#        with:
+#          github-token: ${{ secrets.GITHUB_TOKEN }}
+#          script: |
+#            github.git.createRef({
+#              owner: context.repo.owner,
+#              repo: context.repo.repo,
+#              ref: "refs/tags/${{ env.NEW_VERSION }}",
+#              sha: context.sha
+#            })
       - name: Create Release
         id: create_release
-        if: ${{ false }}
+        if: env.NEW_VERSION != ''
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: ${{ env.NEW_VERSION }}
+          release_name: ${{ env.NEW_VERSION }}
           body: ${{ join( github.event.commits.*.message, '; ') }}
           draft: false
           prerelease: false
