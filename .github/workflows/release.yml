@@ -31,6 +31,8 @@ jobs:
 #              ref: "refs/tags/${{ env.NEW_VERSION }}",
 #              sha: context.sha
 #            })
+      - name: print message
+        run: echo "${{ join( github.event.commits.*.message, %0A ) }}"
       - name: Create Release
         id: create_release
         if: env.NEW_VERSION != ''
