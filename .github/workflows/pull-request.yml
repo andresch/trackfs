@@ -1,0 +1,18 @@
+# This workflow will upload a Python Package using Twine when a release is created
+# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
+
+name: Verify that pull requests have new version
+
+on:
+  workflow_dispatch
+  # pull_request
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Verify unique version
+      run: git tag --list | grep -q v$( cat VERSION ) && ( echo "no new version" ; exit 1 )
