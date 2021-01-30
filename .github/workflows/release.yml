@@ -19,7 +19,7 @@ jobs:
         env:
           GITHUB_EVENT: ${{ toJson(github.event) }}
         run: |
-          echo "::set-env name=SAME_VERSION::$(git tags | grep $(cat VERSION))"
+          echo "SAME_VERSION=$(git tags | grep $(cat VERSION))" >> $GITHUB_ENV
           echo "${{ env.SAME_VERSION }}"
       - name: Test For now new version
         if: ${{ env.SAME_VERSION != '' }}
