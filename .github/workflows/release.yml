@@ -22,7 +22,7 @@ jobs:
           echo "::set-env name=SAME_VERSION::$(git tags | grep $(cat VERSION))"
           echo "${{ env.SAME_VERSION }}"
       - name: Test For now new version
-        if: ${{ env.SAME_VERSION != "" }}
+        if: ${{ env.SAME_VERSION != '' }}
         run:  echo 'No new version -> no new release'
       - name: Create Release
         id: create_release
