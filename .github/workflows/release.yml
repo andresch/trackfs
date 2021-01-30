@@ -16,14 +16,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name : Verify new version
-        env:
-          GITHUB_EVENT: ${{ toJson(github.event) }}
-        run: |
-          echo "SAME_VERSION=$(git tag | grep $(cat VERSION))" >> $GITHUB_ENV
-          echo "${{ env.SAME_VERSION }}"
-      - name: Test For now new version
-        if: ${{ env.SAME_VERSION != '' }}
+        run: if git tag | grep -q $( cat VERSION ); then echo "NEW_RELEASE=true" >> $GITHUB_ENV ; else echo "no match"; fi
+      - name: Test For now old version
+        if: ${{ env.NEW_RELEASE != 'true' }}
         run:  echo 'No new version -> no new release'
+      - name: Test For now new version
+        if: ${{ env.NEW_RELEASE == 'true' }}
+        run:  echo 'new version -> new release'
       - name: Create Release
         id: create_release
         if: ${{ false }}
