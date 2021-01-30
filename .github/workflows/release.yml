@@ -15,12 +15,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-      - name : GITHUB CONTEXT
+      - name : Verify new version
         env:
           GITHUB_EVENT: ${{ toJson(github.event) }}
         run: |
-          echo "$GITHUB_EVENT"
-          echo "${{ github.ref }}"
+          echo "::set-env name=SAME_VERSION::$(git tags | grep $(cat VERSION))"
+          echo "${{ env.SAME_VERSION }}"
+      - name: Test For now new version
+        if: ${{ env.SAME_VERSION != "" }}
+        run:  echo 'No new version -> no new release'
       - name: Create Release
         id: create_release
         if: ${{ false }}
