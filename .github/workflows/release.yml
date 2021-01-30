@@ -17,6 +17,7 @@ jobs:
 
         *
         *
+        *
 
     steps:
       - name: Checkout code
