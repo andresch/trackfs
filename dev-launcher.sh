@@ -19,6 +19,7 @@ ln -s /work/.pypirc ~/.pypirc
 mkdir -p ~/dev
 cd ~/dev
 for file in $(ls /work); do ln -s "/work/${file}" "${file}"; done
+ln -s "/work/.github" ".github"
 pip install -e .
 
 # launch sub-shell

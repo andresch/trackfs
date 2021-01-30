@@ -9,14 +9,19 @@
 #
 # =================================
 
-FROM docker.io/python:3.8-alpine as builder
+#FROM docker.io/python:3.8-alpine as builder
+FROM docker:dind
 
 RUN \
-  apk add --no-cache gcc musl-dev libffi-dev openssl-dev fuse fuse-dev flac \
-  && /usr/local/bin/python -m pip install --upgrade pip \
+  apk add --no-cache python3 python3-dev py3-pip gcc musl-dev libffi-dev openssl-dev fuse fuse-dev flac bash curl git
+
+RUN \
+  python3 -m pip install --upgrade pip \
   && pip install --upgrade setuptools wheel twine
 
-RUN pip install --upgrade mutagen fusepy Lark chardet
+RUN curl https://raw.githubusercontent.com/nektos/act/master/install.sh | bash
+
+RUN pip install --upgrade mutagen fusepy Lark chardet\<4,\>=3.0.2
 
 # enable non-root users to make FUSE fs non-private
 RUN echo "user_allow_other" >> /etc/fuse.conf 

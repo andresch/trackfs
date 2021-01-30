@@ -1,8 +1,10 @@
 on:
   push:
+    branches:
+      - master
     # Sequence of patterns matched against refs/tags
-    tags:
-      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+    #tags:
+    #  - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 name: Create Release
 
@@ -16,7 +18,9 @@ jobs:
       - name : GITHUB CONTEXT
         env:
           GITHUB_EVENT: ${{ toJson(github.event) }}
-        run: echo "$GITHUB_EVENT"
+        run: |
+          echo "$GITHUB_EVENT"
+          echo "${{ github.ref }}"
       - name: Create Release
         id: create_release
         if: ${{ false }}
@@ -24,7 +28,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         with:
-          tag_name: ${{ github.ref }}
+     git     tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
           body: ${{ join( github.event.commits.*.message, "\n" }}
           draft: false
