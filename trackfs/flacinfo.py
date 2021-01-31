@@ -9,6 +9,7 @@
 
 import re
 import os
+import shlex
 from functools import lru_cache, cached_property
 
 from mutagen.flac import FLAC
@@ -110,6 +111,12 @@ class FlacInfo():
 
         return tags
 
+    def _tag_as_flac_arg(self, tag_name, tag_value):
+        log.debug(f'{tag_name}={tag_value}')
+        # for whatever weird reason quote has a problem with some values if
+        # not casted into str before
+        return f"--tag={shlex.quote(str(tag_name))}={shlex.quote(str(tag_value))}"
+
     def track_tags(self, num):
         tags = self._album_tags()
         for (k, vs) in self._track_tags(num).items():
@@ -121,7 +128,7 @@ class FlacInfo():
             tags['COMPOSER'] = tags['ARTIST']
 
         log.debug(f"tags for current track: {tags}")
-        return ' '.join([f'--tag="{k}"="{v}"' for k, vs in tags.items() for v in vs])
+        return ' '.join([self._tag_as_flac_arg(k, v) for k, vs in tags.items() for v in vs])
 
 
 def init(ignore):

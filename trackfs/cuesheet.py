@@ -23,6 +23,8 @@ from lark import Lark, Transformer
 
 import logging
 
+from typing import List
+
 log = logging.getLogger(__name__)
 
 # Lark cue-sheet grammar according to original spec
@@ -104,19 +106,20 @@ _CUE_LARK_GRAMMAR = r"""
 _CUE_LARK_PARSER = Lark(_CUE_LARK_GRAMMAR, start='cue_sheet')
 
 
-class CueSheet():
-    """Relevant information from a parsed cue sheet
+@dataclass
+class CueSheet:
+    """Meta data from a parsed cue sheet
    
-    In the context of FlacTrackFS we're only interested in track
-    information from a cue sheet. All additional data elements are
-    not used
     """
-
-    def __init__(self, disc_elements, tracks):
-        self.tracks = tracks
-
-    def __repr__(self):
-        return f'cuesheet:\n{self.tracks}'
+    tracks: List['Track']
+    albumartists: List[str] = None
+    album: str = None
+    composers: List[str] = None
+    catalog: str = None
+    discid: str = None
+    year: str = None
+    discnumber: str = None
+    totaldiscs: str = None
 
     def calc_track_times(self, disc_duration):
         for i in range(0, len(self.tracks) - 1):
@@ -127,7 +130,7 @@ class CueSheet():
         last.end = Time.create(disc_duration)
         return self
 
-
+@dataclass
 class Track:
     """All information extracted for a track from a cue sheet
 
@@ -151,52 +154,20 @@ class Track:
     once the whole cue sheet got parsed.
     """
 
-    def __init__(self, num, type, track_entries):
-        self.num = num
-        self.type = type
-        self.artists = None
-        self.composers = None
-        self.title = None
-        self.isrc = None
-        self.start = None
-        self.end = None
-        for entry in track_entries:
-            if entry.data == 'performer':
-                self._extend__list_attr("artists", entry.children[0])
-            if entry.data == 'songwriter':
-                self._extend__list_attr("composers", entry.children[0])
-            elif entry.data == 'title':
-                self.title = entry.children[0]
-            elif entry.data == 'isrc':
-                self.isrc = entry.children[0]
-            elif entry.data == 'index':
-                idx = entry.children
-                # we're only interested in index 1
-                if idx[0] == 1:
-                    self.start = idx[1];
-
-    def _extend__list_attr(self, name, value):
-        # most rippers use ";" as delimiter for multiple values inside a
-        # single entry rather than having multiple entries
-        values = [p.strip() for p in value.split(";")]
-        old_value = getattr(self, name)
-        if old_value == None:
-            setattr(self, name, values)
-        else:
-            setattr(self, name, old_value + values)
-
-    def __repr__(self):
-        return (f"track #{self.num} {self.type} [{self.isrc}] [{self.start}-{self.end}]"
-                + (f" title: '{self.title}' " if self.title else "")
-                + (f" artists: {self.artists}" if self.artists else "")
-                + (f" composers: {self.composers}" if self.composers else "")
-                )
+    num: int
+    type: str
+    artists: List[str] = None
+    composers: List[str] = None
+    title: List[str] = None
+    isrc: str = None
+    start: 'Time' = None
+    end: 'Time' = None
+    duration: 'Time' = None
 
 
 @dataclass(frozen=True)
 class Time:
-    """ Timestamp / dur
-    ation information with CD frame accuracy
+    """ Timestamp / duration information with CD frame accuracy
 
     Attributes
     ----------
@@ -274,11 +245,75 @@ class Time:
 class _CueTransformer(Transformer):
     """Transforms the Lark-parser-tree in a CueSheet"""
 
+    @staticmethod
+    def _extend__list_arg(args, name, value):
+        # most rippers use ";" as delimiter for multiple values inside a
+        # single entry rather than having multiple entries
+        values = [p.strip() for p in value.split(";")]
+        old_value = args.get(name, None)
+        if old_value is None:
+            args[name] = values
+        else:
+            args[name] = old_value + values
+
+    @staticmethod
+    def _map_to_arg(args, mappings, name, value) -> bool:
+        mapping = mappings.get(name, None)
+        if mapping is None:
+            return False
+        (mapped_name, is_list) = mapping
+        if is_list:
+            _CueTransformer._extend__list_arg(args, mapped_name, value)
+        else:
+            args[mapped_name]=value
+        return True
+
+    ALBUM_MAPPINGS = {
+        'performer': ("albumartists", True),
+        'songwriter': ("composers", True),
+        'title': ("album", False),
+        'catalog': ("catalog", False)
+    }
+
+    COMMENT_MAPPINGS = {
+        'discid': ("discid", False),
+        'date': ("year", False),
+        'discnumber': ("discnumber", False),
+        'totaldiscs': ("totaldiscs", False)
+    }
+
     def cue_sheet(self, subtrees):
-        return CueSheet(subtrees[0].children, subtrees[1].children)
+        args = {'tracks': subtrees[1].children}
+        for entry in subtrees[0].children:
+            (name, value) = (entry.data.lower(), entry.children[0])
+            if _CueTransformer._map_to_arg(args, self.ALBUM_MAPPINGS, name, value):
+                pass
+            elif name == 'comment':
+                # extract known key-value comments
+                splits = value.split(' ', 1)
+                if len(splits) > 1:
+                    _CueTransformer._map_to_arg(args, self.COMMENT_MAPPINGS, splits[0].lower(), splits[1])
+        return CueSheet(**args)
+
+    TRACK_MAPPINGS = {
+        'performer': ("artists", True),
+        'songwriter': ("composers", True),
+        'title': ("title", False),
+        'isrc': ("isrc", False)
+    }
 
     def track(self, subtrees):
-        return Track(subtrees[0], subtrees[1], subtrees[2].children)
+        args = {'num': subtrees[0], 'type': subtrees[1]}
+        for entry in subtrees[2].children:
+            (name, value) = (entry.data.lower(), entry.children[0])
+            if _CueTransformer._map_to_arg(args, self.TRACK_MAPPINGS, name, value):
+                pass
+            elif name == 'index':
+                idx = entry.children
+                # we're only interested in index 1
+                if idx[0] == 1:
+                    args['start'] = idx[1]
+        return Track(**args)
 
     def mmssff(self, elems):
         return Time(elems[0], elems[1], elems[2])
@@ -320,12 +355,11 @@ if __name__ == '__main__':
         ISRC FR2PY1403200
         INDEX 01 00:00:00
       TRACK 02 AUDIO
-        PERFORMER "Zaz"
+        PERFORMER "Zaz; Zazo"
         TITLE "Sous le ciel de Paris"
         ISRC FR2PY1403250
         INDEX 01 02:58:68"""
 
-    text = '{"key": ["item0", "item1", 3.14, true]}'
     print(
         _CueTransformer(
             visit_tokens=True
