@@ -9,6 +9,7 @@
 
 import re
 import os
+import shlex
 from functools import lru_cache, cached_property
 
 from mutagen.flac import FLAC
@@ -23,7 +24,7 @@ log = logging.getLogger(__name__)
 DEFAULT_IGNORE_TAGS_REX = re.compile('CUE_TRACK.*|COMMENT')
 
 
-class FlacInfo():
+class AlbumInfo():
     IGNORE_TAGS_REX = DEFAULT_IGNORE_TAGS_REX
 
     def __init__(self, path):
@@ -76,6 +77,21 @@ class FlacInfo():
                 return t
         return None
 
+    def _cue_album_tags(self):
+        cue = self.cue
+        tags = {}
+        if cue is not None:
+            if cue.albumartists: tags['ALBUMARTIST'] = cue.albumartists
+            if cue.composers: tags['COMPOSER'] = cue.composers
+            if cue.album: tags['ALBUM'] = [cue.album]
+            if cue.catalog: tags['CATALOG'] = [cue.catalog]
+            if cue.discid: tags['DISCID'] = [cue.discid]
+            if cue.year: tags['YEAR'] = [cue.year]
+            if cue.discnumber: tags['DISCNUMBER'] = [cue.discnumber]
+            if cue.totaldiscs: tags['TOTALDISCS'] = [cue.totaldiscs]
+
+        return tags
+
     def _album_tags(self):
         meta = self.meta
         tags = {}
@@ -85,7 +101,7 @@ class FlacInfo():
             if len(v.splitlines()) != 1:
                 continue
             # skip _IGNORE_TAGS
-            if FlacInfo.IGNORE_TAGS_REX.match(k):
+            if AlbumInfo.IGNORE_TAGS_REX.match(k):
                 continue
             if k not in tags: tags[k] = []
             tags[k].append(v)
@@ -96,6 +112,12 @@ class FlacInfo():
             tags['ALBUMARTIST'] = tags['ARTIST']
         if 'ALBUM' not in tags and 'TITLE' in tags:
             tags['ALBUM'] = tags['TITLE']
+
+        # add missing tags from cue sheet
+        for (k, v) in self._cue_album_tags().items():
+            if k not in tags:
+                tags[k] = v
+
         return tags
 
     def _track_tags(self, num):
@@ -110,7 +132,13 @@ class FlacInfo():
 
         return tags
 
-    def track_tags(self, num):
+    def _tag_as_flac_arg(self, tag_name, tag_value):
+        log.debug(f'{tag_name}={tag_value}')
+        # for whatever weird reason quote has a problem with some values if
+        # not casted into str before
+        return f"--tag={shlex.quote(str(tag_name))}={shlex.quote(str(tag_value))}"
+
+    def track_tags_as_flac_args(self, num):
         tags = self._album_tags()
         for (k, vs) in self._track_tags(num).items():
             tags[k] = vs
@@ -121,14 +149,14 @@ class FlacInfo():
             tags['COMPOSER'] = tags['ARTIST']
 
         log.debug(f"tags for current track: {tags}")
-        return ' '.join([f'--tag="{k}"="{v}"' for k, vs in tags.items() for v in vs])
+        return ' '.join([self._tag_as_flac_arg(k, v) for k, vs in tags.items() for v in vs])
 
 
 def init(ignore):
     log.info(f'Tags to ignore: "{ignore}"')
-    FlacInfo.IGNORE_TAGS_REX = re.compile(ignore)
+    AlbumInfo.IGNORE_TAGS_REX = re.compile(ignore)
 
 
 @lru_cache(maxsize=5)
-def get(path) -> FlacInfo:
-    return FlacInfo(path)
+def get(path) -> AlbumInfo:
+    return AlbumInfo(path)

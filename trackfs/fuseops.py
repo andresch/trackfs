@@ -19,7 +19,7 @@ from threading import RLock
 from fuse import Operations
 
 from . import fusepath
-from . import flacinfo
+from . import albuminfo
 from .flactracks import TrackManager
 
 import logging
@@ -41,7 +41,7 @@ class TrackFSOps(Operations):
                  separator=fusepath.DEFAULT_TRACK_SEPARATOR,
                  flac_extension=fusepath.DEFAULT_FLAC_EXTENSION,
                  title_length=fusepath.DEFAULT_MAX_TITLE_LEN,
-                 tags_ignored=flacinfo.DEFAULT_IGNORE_TAGS_REX
+                 tags_ignored=albuminfo.DEFAULT_IGNORE_TAGS_REX
                  ):
         self.root = os.path.realpath(root)
         self.keep_flac = keep_flac
@@ -54,7 +54,7 @@ class TrackFSOps(Operations):
             keep_flac=keep_flac
         )
         # TODO: avoid global init function
-        flacinfo.init(tags_ignored)
+        albuminfo.init(tags_ignored)
 
     def __call__(self, op, path, *args):
         return super(TrackFSOps, self).__call__(op, self.root + path, *args)

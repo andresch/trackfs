@@ -32,7 +32,7 @@ realias () {
     alias "${1}"="${2}"
 }
 
-realias tfs "/usr/local/bin/trackfs --root-allowed /src /dst"
+realias tfs "/usr/bin/trackfs --root-allowed /src /dst"
 realias st "cat /work/tools.sh"
 realias lt "source /work/tools.sh"
 

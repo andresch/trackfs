@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 
 from . import cuesheet
-from . import flacinfo
+from . import albuminfo
 
 import logging
 log = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ class FusePath():
         for filename in os.listdir(self.source):
             (basename, extension) = os.path.splitext(filename)
             if( extension == self.flac_extension ):
-                trx = flacinfo.get(os.path.join(self.source, filename)).tracks()
+                trx = albuminfo.get(os.path.join(self.source, filename)).tracks()
                 if trx:
                     if self.keep_flac:
                         entries.append(filename)
