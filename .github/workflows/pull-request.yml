@@ -15,4 +15,4 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Verify unique version
-      run: git tag --list | grep -q v$( cat VERSION ) && ( echo "no new version" ; exit 1 )
+      run: if git tag --list | grep -q v$( cat VERSION ); then echo "no new version"; exit 1; else echo "new version provided"; fi
