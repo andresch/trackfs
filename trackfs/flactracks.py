@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Dict
 from threading import RLock, Thread
 
-from . import flacinfo
+from . import albuminfo
 from .fusepath import FusePath
 from .cuesheet import Track
 
@@ -139,7 +139,7 @@ class TrackManager:
 
         track_file = self._new_temp_filename()
 
-        flac_info = flacinfo.get(fp.source)
+        flac_info = albuminfo.get(fp.source)
 
         # extract picture from flac if available
         picture_file = self._new_temp_filename()
@@ -154,7 +154,7 @@ class TrackManager:
             f'flac -d --silent --stdout --skip={fp.start.flac_time()}'
             f'  --until={fp.end.flac_time()} "{fp.source}" '
             f'| flac --silent -f --fast'
-            f'  {flac_info.track_tags(fp.num)}{picture_arg} -o {track_file} -'
+            f'  {flac_info.track_tags_as_flac_args(fp.num)}{picture_arg} -o {track_file} -'
         )
         log.debug(f'extracting track with command: "{flac_cmd}"')
         rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
@@ -202,7 +202,7 @@ class TrackManager:
                     del self.preloaded_next_tracks[path]
 
     @staticmethod
-    def _find_this_and_next_track(flac_info: flacinfo.FlacInfo, num: int) -> Tuple[Track or None, Track or None]:
+    def _find_this_and_next_track(flac_info: albuminfo.AlbumInfo, num: int) -> Tuple[Track or None, Track or None]:
         log.info(f'checking for subsequent track of track "{num}"')
         tracks = flac_info.tracks()
         if tracks is not None:
@@ -228,7 +228,7 @@ class TrackManager:
             log.debug(f'more than ~{self.preload_lead_time} seconds to play; no preload')
             return
 
-        flac_info = flacinfo.get(fp.source)
+        flac_info = albuminfo.get(fp.source)
         (track, next_track) = self._find_this_and_next_track(flac_info, fp.num)
         if next_track is None:
             log.debug(f'got last track: "{fp.num}"; no preload')
@@ -265,7 +265,7 @@ class TrackManager:
         if track_info is None:
             # TODO: can we find a better estimation?
             # use raw-audio size as estimation
-            f = flacinfo.get(fp.source).meta
+            f = albuminfo.get(fp.source).meta
             return int(
                 (fp.end - fp.start).seconds()
                 * f.info.channels
