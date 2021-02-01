@@ -23,21 +23,7 @@ jobs:
       - name : Check for new version
         run: |
           VERSION=v$( cat VERSION )
-          if git tag --list | grep -q ${VERSION}; then echo "NEW_VERSION=${VERSION}" >> $GITHUB_ENV ; else echo "no match"; fi
-#      - name: Create tag for new version
-#        if: env.NEW_VERSION != ''
-#        uses: actions/github-script@v3
-#        with:
-#          github-token: ${{ secrets.GITHUB_TOKEN }}
-#          script: |
-#            github.git.createRef({
-#              owner: context.repo.owner,
-#              repo: context.repo.repo,
-#              ref: "refs/tags/${{ env.NEW_VERSION }}",
-#              sha: context.sha
-#            })
-      - name: print message
-        run: echo "${{ join( github.event.commits.*.message, env.MSG_SEPARATOR ) }}"
+          if git tag --list | grep -q "${VERSION}"; then echo "existing version"; else echo "NEW_VERSION=${VERSION}" >> $GITHUB_ENV; fi
       - name: Create Release
         id: create_release
         if: env.NEW_VERSION != ''
