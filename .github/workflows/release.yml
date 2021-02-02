@@ -13,6 +13,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     env:
+      NEW_VERSION: .
       MSG_SEPARATOR: |+
 
         ___
@@ -26,7 +27,7 @@ jobs:
           if git tag --list | grep -q "${VERSION}"; then echo "existing version"; else echo "NEW_VERSION=${VERSION}" >> $GITHUB_ENV; fi
       - name: Create Release
         id: create_release
-        if: env.NEW_VERSION != ''
+        if: env.NEW_VERSION != '.'
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

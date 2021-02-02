@@ -38,7 +38,7 @@ ADD https://api.github.com/repos/andresch/trackfs/compare/master...HEAD /dev/nul
 
 # Now install the latest trackfs version from pypi
 RUN \
-  pip install trackfs>=0.2.0
+  pip install git+https://github.com/andresch/trackfs@v0.2.0
 
 # source directory containing flac+cue files
 VOLUME /src
