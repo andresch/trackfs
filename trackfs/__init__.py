@@ -38,17 +38,17 @@ def main(foreground=True, allow_other=True):
     parser.add_argument(
         '-i', '--ignore-tags', dest='ignore', default='CUE_TRACK.*|COMMENT',
         help=(
-            'A regular expression for tags in the FLAC file that will not be '
+            'A regular expression for tags that will not be '
             'copied to the track FLACs (default: "CUE_TRACK.*|COMMENT")'
         )
     )
     parser.add_argument(
-        '-e', '--extension', dest='extension', default=fusepath.DEFAULT_FLAC_EXTENSION,
-        help=f'The file extension of FLAC files (default: "{fusepath.DEFAULT_FLAC_EXTENSION}")'
+        '-e', '--extension', dest='extension', default=fusepath.DEFAULT_ALBUM_EXTENSION,
+        help=f'A regular expression to identify file extensions of of album files (default: "{fusepath.DEFAULT_ALBUM_EXTENSION}")'
     )
     parser.add_argument(
-        '-k', '--keep-flac-cue', dest='keep', action='store_true',
-        help='Keep the source FLAC+CUE file in the mapped filesystem'
+        '-k', '--keep-album', dest='keep', action='store_true',
+        help='Keep the source album file (FLAC+CUE or WAVE) in the mapped filesystem'
     )
     parser.add_argument(
         '-t', '--title-length', dest='title_length', default=fusepath.DEFAULT_MAX_TITLE_LEN,
@@ -98,7 +98,7 @@ If you are absolutely sure that that's what you want, use the option "--root-all
 
     trackfs = TrackFSOps(
         args.root,
-        keep_flac=args.keep, separator=args.separator, flac_extension=args.extension,
+        keep_album=args.keep, separator=args.separator, album_extension=args.extension,
         title_length=int(args.title_length), tags_ignored=args.ignore
     )
 

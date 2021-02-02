@@ -18,12 +18,14 @@
 #
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
+
 from lark import Lark, Transformer
 
 import logging
 
-from typing import List
+from typing import List, Any, Dict
 
 log = logging.getLogger(__name__)
 
@@ -106,12 +108,32 @@ _CUE_LARK_GRAMMAR = r"""
 _CUE_LARK_PARSER = Lark(_CUE_LARK_GRAMMAR, start='cue_sheet')
 
 
+class TagTools:
+    @staticmethod
+    def object_tags(o: object, names: Dict[str, str] or List[str] = None) -> Dict[str, List[str]]:
+        tags = {}
+        if names is None:
+            names = dir(o)
+        if isinstance(names, List):
+            names = zip(names, names)
+        else:
+            names = names.items()
+        for (attr, tag) in names:
+            value = getattr(o, attr, None)
+            if isinstance(value, List):
+                # hacky way to get rid of plural s
+                tags[tag[0: -1].upper()] = value
+            elif value is not None:
+                tags[tag.upper()] = [value]
+        return tags
+
+
 @dataclass
 class CueSheet:
     """Meta data from a parsed cue sheet
    
     """
-    tracks: List['Track']
+    tracks: List['Track'] = field(default_factory=list)
     albumartists: List[str] = None
     album: str = None
     composers: List[str] = None
@@ -125,10 +147,13 @@ class CueSheet:
         for i in range(0, len(self.tracks) - 1):
             curr = self.tracks[i]
             curr.end = self.tracks[i + 1].start
-            curr.duration = curr.end - curr.start
         last = self.tracks[-1];
         last.end = Time.create(disc_duration)
         return self
+
+    def tags(self):
+        return TagTools.object_tags(self, dir(self).remove('tracks'))
+
 
 @dataclass
 class Track:
@@ -162,7 +187,15 @@ class Track:
     isrc: str = None
     start: 'Time' = None
     end: 'Time' = None
-    duration: 'Time' = None
+
+    @cached_property
+    def duration(self) -> 'Time':
+        return self.end - self.start
+
+    def tags(self):
+        return TagTools.object_tags(self,
+                                    {'artists': 'artists', 'composers': 'composers',
+                                     'title': 'title', 'num': 'tracknumber'})
 
 
 @dataclass(frozen=True)
@@ -265,7 +298,7 @@ class _CueTransformer(Transformer):
         if is_list:
             _CueTransformer._extend__list_arg(args, mapped_name, value)
         else:
-            args[mapped_name]=value
+            args[mapped_name] = value
         return True
 
     ALBUM_MAPPINGS = {
