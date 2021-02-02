@@ -8,13 +8,16 @@
 #
 
 import os
+import shlex
 import time
+import wave
 
 from dataclasses import dataclass
+from math import trunc
 from tempfile import mkstemp
 from subprocess import DEVNULL, run
 from concurrent.futures import ThreadPoolExecutor
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from threading import RLock, Thread
 
 from . import albuminfo
@@ -122,6 +125,19 @@ class TrackManager:
             del self.registry[key]
 
     @staticmethod
+    def _tag_as_flac_arg(tag_name, tag_value):
+        # for whatever weird reason quote has a problem with some values if
+        # not casted into str before
+        return f"--tag={shlex.quote(str(tag_name))}={shlex.quote(str(tag_value))}"
+
+    @staticmethod
+    def track_tags_as_flac_args(album_info, num):
+        tags = album_info.track_tags(num)
+
+        log.debug(f"tags for current track: {tags}")
+        return ' '.join([TrackManager._tag_as_flac_arg(k, v) for k, vs in tags.items() for v in vs])
+
+    @staticmethod
     def _new_temp_filename() -> os.PathLike:
         (fh, temp_file) = mkstemp()
         # we don't want to process the file in python; just want a unique filename
@@ -130,7 +146,16 @@ class TrackManager:
         os.close(fh)
         return temp_file
 
-    def _extract_track(self, path: os.PathLike, fp: FusePath) -> os.PathLike:
+    @staticmethod
+    def _find_albmum_art(fp: FusePath) -> Optional[os.PathLike]:
+        for fn in [
+            fp.source_root+".jpg",
+            os.path.dirname(fp.source_root)+'folder.jpg'
+        ]:
+            if os.path.exists(fn): return fn
+        return None
+
+    def _extract_flac_track(self, path: os.PathLike, fp: FusePath, album_info: albuminfo.AlbumInfo) -> os.PathLike:
         """creates a real file for a given virtual track file
 
         extracts the track from the underlying FLAC+CUE file into 
@@ -138,8 +163,6 @@ class TrackManager:
         log.info(f'open track "{path}"')
 
         track_file = self._new_temp_filename()
-
-        flac_info = albuminfo.get(fp.source)
 
         # extract picture from flac if available
         picture_file = self._new_temp_filename()
@@ -149,16 +172,71 @@ class TrackManager:
         picture_arg = ""
         if rc == 0:
             picture_arg = f' --picture="{picture_file}"'
+        else:
+            local_album_art = self._find_albmum_art(fp)
+            if local_album_art:
+                picture_arg = f' --picture="{local_album_art}"'
 
+        track = album_info.track(fp.num)
         flac_cmd = (
-            f'flac -d --silent --stdout --skip={fp.start.flac_time()}'
-            f'  --until={fp.end.flac_time()} "{fp.source}" '
+            f'flac -d --silent --stdout --skip={track.start.flac_time()}'
+            f'  --until={track.end.flac_time()} "{fp.source}" '
             f'| flac --silent -f --fast'
-            f'  {flac_info.track_tags_as_flac_args(fp.num)}{picture_arg} -o {track_file} -'
+            f'  {self.track_tags_as_flac_args(album_info,fp.num)}{picture_arg} -o {track_file} -'
         )
         log.debug(f'extracting track with command: "{flac_cmd}"')
         rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
         os.remove(picture_file)
+        with self.rwlock:
+            if rc != 0:
+                err_msg = f'failed to extract track #{fp.num} from file "{fp.source}"'
+                log.error(err_msg)
+                os.remove(track_file)
+                del self[path]
+                raise FlacSplitException(err_msg)
+            else:
+                self._add(path, track_file)
+
+        return track_file
+
+    def _extract_wave_track(self, path: os.PathLike, fp: FusePath, album_info: albuminfo.AlbumInfo) -> os.PathLike:
+        """creates a real file for a given virtual track file
+
+        extracts the track from the underlying WAVE  file and associated CUE-Sheet into
+        a temporary file and then opens the temporary file"""
+        log.info(f'open track "{path}"')
+
+        track_file = self._new_temp_filename()
+
+        track = album_info.track(fp.num)
+
+        # search for album-art in same directory
+        local_album_art = self._find_albmum_art(fp)
+        if local_album_art:
+            picture_arg = f' --picture="{local_album_art}"'
+        else:
+            picture_arg = ""
+
+        wave_track_file = self._new_temp_filename()
+        with wave.open(fp.source, 'r') as wav_in:
+            params = wav_in.getparams()
+            wav_in.setpos(trunc(track.start.seconds() * params.framerate))
+            nframes = trunc(track.duration.seconds() * params.framerate)
+            with wave.open(wave_track_file, 'w') as wav_out:
+                out_params = (params.nchannels, params.sampwidth, params.framerate,
+                              nframes, params.comptype, params.compname)
+                wav_out.setparams(out_params)
+                chunk_size = 512*1025
+                while nframes > 0:
+                    wav_out.writeframes(wav_in.readframes(min(nframes, chunk_size)))
+                    nframes -= chunk_size
+
+        flac_cmd = (
+            f'flac --silent -f --fast'
+            f'  {self.track_tags_as_flac_args(album_info, fp.num)}{picture_arg} -o "{track_file}" "{wave_track_file}"'
+        )
+        log.debug(f'extracting track with command: "{flac_cmd}"')
+        rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
         with self.rwlock:
             if rc != 0:
                 err_msg = f'failed to extract track #{fp.num} from file "{fp.source}"'
@@ -187,7 +265,16 @@ class TrackManager:
 
             # give other thread time to finish processing
             time.sleep(0.5)
-        return self._extract_track(path, fp)
+        album_info = albuminfo.get(fp.source)
+        audio_format = album_info.format()
+        if audio_format == 'WAVE':
+            return self._extract_wave_track(path, fp, album_info)
+        elif audio_format == 'FLAC':
+            return self._extract_flac_track(path, fp, album_info)
+        else:
+            err_msg = f'unexpected audio format "{audio_format}"; can\'t proceed'
+            log.error(err_msg)
+            raise FlacSplitException(err_msg)
 
     def release_track(self, path: os.PathLike, fp: FusePath):
         log.info(f'release track "{path}"')
@@ -202,9 +289,9 @@ class TrackManager:
                     del self.preloaded_next_tracks[path]
 
     @staticmethod
-    def _find_this_and_next_track(flac_info: albuminfo.AlbumInfo, num: int) -> Tuple[Track or None, Track or None]:
+    def _find_this_and_next_track(album_info: albuminfo.AlbumInfo, num: int) -> Tuple[Track or None, Track or None]:
         log.info(f'checking for subsequent track of track "{num}"')
-        tracks = flac_info.tracks()
+        tracks = album_info.tracks()
         if tracks is not None:
             total_tracks = len(tracks)
             track = None
@@ -222,16 +309,15 @@ class TrackManager:
     def _do_check_next_track(self, path: os.PathLike, fp: FusePath, offset: int) -> None:
         log.info(f'_do_check_next_track: "{path}" [{offset}]')
 
-        duration = (fp.end - fp.start).seconds()
-        file_size = os.stat(self[path].temp_file_path).st_size
-        if (1.0 - (float(offset) / float(file_size))) * duration > self.preload_lead_time:
-            log.debug(f'more than ~{self.preload_lead_time} seconds to play; no preload')
-            return
-
-        flac_info = albuminfo.get(fp.source)
-        (track, next_track) = self._find_this_and_next_track(flac_info, fp.num)
+        album_info = albuminfo.get(fp.source)
+        (track, next_track) = self._find_this_and_next_track(album_info, fp.num)
         if next_track is None:
             log.debug(f'got last track: "{fp.num}"; no preload')
+            return
+
+        file_size = os.stat(self[path].temp_file_path).st_size
+        if (1.0 - (float(offset) / float(file_size))) * track.duration > self.preload_lead_time:
+            log.debug(f'more than ~{self.preload_lead_time} seconds to play; no preload')
             return
 
         with self.rwlock:
@@ -265,12 +351,14 @@ class TrackManager:
         if track_info is None:
             # TODO: can we find a better estimation?
             # use raw-audio size as estimation
-            f = albuminfo.get(fp.source).meta
+            album_info = albuminfo.get(fp.source)
+            meta = album_info.meta
+            track = album_info.track(fp.num)
             return int(
-                (fp.end - fp.start).seconds()
-                * f.info.channels
-                * (f.info.bits_per_sample / 8)
-                * f.info.sample_rate
+                (track.end - track.start).seconds()
+                * meta.info.channels
+                * (meta.info.bits_per_sample / 8)
+                * meta.info.sample_rate
             )
         else:
             # use the actual size of the track-file

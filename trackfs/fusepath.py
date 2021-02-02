@@ -29,31 +29,34 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TRACK_SEPARATOR     : str   = '.#-#.'
 DEFAULT_MAX_TITLE_LEN       : int   = 20
-DEFAULT_FLAC_EXTENSION      : str   = '.flac'
+DEFAULT_ALBUM_EXTENSION     : str   = '(\\.flac|\\.wav)'
 DEFAULT_VALID_CHARS         : str   = "-_() " + string.ascii_letters + string.digits
-DEFAULT_KEEP_PATH           : bool  = False
+DEFAULT_KEEP_ALBUM          : bool  = False
 
 @dataclass(frozen=True)
-class Factory():
+class Factory:
     '''manages the configuration options for the virtual fuse paths'''
     
     track_separator         : str   = DEFAULT_TRACK_SEPARATOR
     max_title_len           : int   = DEFAULT_MAX_TITLE_LEN
-    flac_extension          : str   = DEFAULT_FLAC_EXTENSION
+    album_extension         : str   = DEFAULT_ALBUM_EXTENSION
     valid_filename_chars    : str   = DEFAULT_VALID_CHARS
-    keep_flac               : bool  = DEFAULT_KEEP_PATH
+    keep_album              : bool  = DEFAULT_KEEP_ALBUM
     
     @cached_property
     def track_file_regex(self):
-        (separator_rex, extension_rex) = [ s.replace('.','\\.') for s in [self.track_separator, self.flac_extension] ]
+        separator_rex = self.track_separator.replace('.','\\.')
         flac_cue_rex = (
-            '^(?P<basename>.*)'+separator_rex
+            '^(?P<basename>.*)(?P<extension>'+self.album_extension+')'+separator_rex
             + '(?P<num>\\d+)(?P<title>(\\.[^\\.]{,'+str(self.max_title_len)
-            + '}?)?)\\.(?P<start>\\d{6})-(?P<end>\d{6})'
-            + '(?P<extension>'+extension_rex+')$'
+            + '}?)?)\.flac$'
         )
         log.debug("Factory.track_file_regex: "+flac_cue_rex)
         return re.compile(flac_cue_rex)
+
+    @cached_property
+    def album_ext_regex(self):
+        return re.compile(self.album_extension)
 
     def from_vpath(self, path):
         """Construct a FusePath instance from a given virtual path"""
@@ -67,29 +70,25 @@ class Factory():
         return FusePath(
             match['basename'], match['extension'], True,
             int(match['num']), title,
-            cuesheet.Time.create(match['start']), cuesheet.Time.create(match['end']),
             self
         )
         
     def from_track(self, source_root, extension, track):
         return FusePath(
             source_root, extension, True,
-            track.num, track.title, track.start, track.end,
-            self
+            track.num, track.title, self
         )      
         
 _DEFAULT_FACTORY = Factory()
 
 @dataclass(frozen=True)
-class FusePath():
+class FusePath:
     ''' represents an entry in the virtual trackfs filesystem'''
     source_root             : str
     extension               : str
     is_track                : bool          = False
     num                     : int           = None
     title                   : str           = None
-    start                   : cuesheet.Time = None    
-    end                     : cuesheet.Time = None
     _factory                : Factory       = _DEFAULT_FACTORY
         
     @property
@@ -97,13 +96,15 @@ class FusePath():
     @property
     def max_title_len(self): return self._factory.max_title_len
     @property
-    def flac_extension(self): return self._factory.flac_extension
+    def flac_extension(self): return self._factory.album_extension
     @property
     def valid_filename_chars(self): return self._factory.valid_filename_chars
     @property
     def track_file_regex(self): return self._factory.track_file_regex
     @property
-    def keep_flac(self): return self._factory.keep_flac
+    def album_ext_regex(self): return self._factory.album_ext_regex
+    @property
+    def keep_album(self): return self._factory.keep_album
 
     @cached_property
     def source(self):
@@ -122,8 +123,8 @@ class FusePath():
     def vpath(self):
         if(self.is_track): 
             return (
-                f'{self.source_root}{self.track_separator}{self.num:03d}'
-                f'{self.title_fragment}.{self.start}-{self.end}{self.extension}'
+                f'{self.source_root}{self.extension}{self.track_separator}{self.num:03d}'
+                f'{self.title_fragment}.flac'
             )
         else:  
             return self.source
@@ -135,17 +136,17 @@ class FusePath():
         entries = ['.', '..']
         for filename in os.listdir(self.source):
             (basename, extension) = os.path.splitext(filename)
-            if( extension == self.flac_extension ):
+            if self.album_ext_regex.fullmatch(extension):
                 trx = albuminfo.get(os.path.join(self.source, filename)).tracks()
-                if trx:
-                    if self.keep_flac:
+                if trx is not None:
+                    if self.keep_album:
                         entries.append(filename)
                     for t in trx:
                         entries.append( 
                             self._factory.from_track(basename, extension, t).vpath
                         )
                 else:
-                   entries.append(filename)
+                    entries.append(filename)
             else:
                 entries.append(filename)
         log.debug(f'vdir entries:{entries}')
@@ -155,6 +156,5 @@ class FusePath():
         '''Construct fusepath entry for another track of the same FLAC+CUE file'''
         return FusePath(
             self.source_root, self.extension, True,
-            num, title, start, end,
-            self._factory
+            num, title, self._factory
         )

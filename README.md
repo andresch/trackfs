@@ -2,7 +2,14 @@
 `trackfs`
 =======
 
-`trackfs` is a read-only FUSE filesystem that splits FLAC+CUE files (FLAC files with cue sheet embedded as vorbis comment) into individual FLAC files per track.
+`trackfs` is a read-only FUSE filesystem that splits audio files that contain full albums into individual FLAC files per track.
+
+`trackfs` supports three flavors of album files:
+* FLAC files with embedded cuesheets (FLAC+CUE)
+* FLAC files with accompanying cuesheet
+* WAVE files with accompanying cuesheet
+
+Accompanying cuesheets must use the fileextension `.cue` and have the same basename as album file.
 
 The recommended way to use `trackfs` is using the docker image `andresch/trackfs`. In case you want to use `trackfs` without docker see section [Manual Installation](https://github.com/andresch/trackfs#manual-installation) below.
  
@@ -27,11 +34,11 @@ docker run --rm \
     --root-allowed
 ```
 
-Replace `/path/to/yourmusiclibrary` with the root directory where `trackfs` scans for your FLAC+CUE files and `/path/to/yourmountpoint` with the directory that you want to use as mount point for the `trackfs`-filesystem. Ideally the mount point already exists, if not, docker will create the directory (but then with root as owner)
+Replace `/path/to/yourmusiclibrary` with the root directory where `trackfs` scans for your album files and `/path/to/yourmountpoint` with the directory that you want to use as mount point for the `trackfs`-filesystem. Ideally the mount point already exists, if not, docker will create the directory (but then with root as owner)
 
-Once started you will find all directories and files from your music library also in the `trackfs`-filesystem. Only FLAC+CUE files got replaced: Instead of a single FLAC+CUE file you will find individual FLAC files for each track found in the embedded cue sheet. The track-files will have the following names:
+Once started you will find all directories and files from your music library also in the `trackfs`-filesystem. Only album files got replaced: Instead of a single album file you will find individual FLAC files for each track found in the cue sheet. The track-files will have the following names:
 
-    {basename(FLAC+CUE-file)}.#-#.{tracknumber}.{track-title}.{start}-{end}.flac
+    {album-file}.#-#.{tracknumber}.{track-title}.flac
 
 While the tracks can be used like regular files, they don't exist in the physical file system on your machine. Instead `trackfs` creates them on the fly whenever an application starts loading any of the track files. This usually takes (depending on your system) a few seconds.
 
@@ -75,14 +82,14 @@ Instead it is recommended to let `trackfs` run as a regular user. For that to wo
 
 `trackfs` provides a few options that allow you to tweak its default behavior: 
 
-* `-e EXTENSION`, `--extension EXTENSION` (default: ".flac") : 
-  The file extension of FLAC files in the music library 
+* `-e EXTENSION`, `--extension EXTENSION` (default: "(\\.flac|\\.wav)") : 
+  A regular expression matching file extension of album files in the music library 
 * `-s SEPARATOR`, `--separator SEPARATOR` (default: ".#-#."): 
   The separator used inside the name of the track-files. Must never occur in regular filenames 
 * `-i IGNORE`, `--ignore-tags IGNORE` (default: "CUE_TRACK.*|COMMENT"):
   A regular expression matching all tags in the FLAC+CUE file that will not be copied over to the track FLACs 
-* `-k`, `--keep-flac-cue`: 
-  Keep the source FLAC+CUE file in the `trackfs` filesystem in addition to the individual tracks
+* `-k`, `--keep-album`: 
+  Keep the source album file (FLAC+CUE or WAVE) in the `trackfs` filesystem in addition to the individual tracks
 * `-t TITLE_LENGTH`, `--title-length TITLE_LENGTH` (default: 20):
   Nr. of characters of the track title in filename of track 
 * `--root-allowed`:
@@ -99,18 +106,21 @@ You can use `-h`, `--help` to get a list of all all options. Keep in mind that t
 Meta-Data in in Track Files
 ---------------------------
 
-Most tags (aka vorbis comments) of the FLAC+CUE file will be set in the track files too. There are only two exceptions:
+Most tags of the album file will be set in the track files too. There are only two exceptions:
 * Tags that contain multi-line values (like the `CUESHEET`-tag)
 * Any tag whose name matches the regular expression of the `--ignore-tags` option (default: `"CUE_TRACK.*|COMMENT"`)
 
 In addition `trackfs` does the following modifications to tags:
-- If the FLAC+CUE file contains an `ARTIST` tag but no `ALBUMARTIST` tag, then an `ALBUMARTIST` tag will be created with the value of `ARTIST` tag.
-- If the FLAC+CUE file contains a `TITLE`tag, but no `ALBUM` tag, then an `ALBUM` tag will be created with the value of the `TITLE` tag.
-- If the cue sheet contains a `TITLE` tag for a given track, it overwrites the `TITLE` tag from the FLAC+CUE file
-- If the cue sheet contains a `PERFORMER` tag for a given track, it overwrites the `ARTIST` tag from the FLAC+CUE file
-- If the cue sheet contains a `SONGWRITER` tag for a given track, it overwrites the `COMPOSER` tag from the FLAC+CUE file
+- If the album file contains an `ARTIST` tag but no `ALBUMARTIST` tag, then an `ALBUMARTIST` tag will be created with the value of `ARTIST` tag.
+- If the album file contains a `TITLE`tag, but no `ALBUM` tag, then an `ALBUM` tag will be created with the value of the `TITLE` tag.
+- If the cue sheet contains a `TITLE` tag for a given track, it overwrites the `TITLE` tag from the album file
+- If the cue sheet contains a `PERFORMER` tag for a given track, it overwrites the `ARTIST` tag from the album file
+- If the cue sheet contains a `SONGWRITER` tag for a given track, it overwrites the `COMPOSER` tag from the album file
+- Any other information from the cue sheet will only be used to add their missing corresponding tags from the audio file, but never to overwrite an existing tag. 
 
-In case the FLAC+CUE file contains pictures, the first picture will be available in the track file.
+Cue sheet entries of type `PERFORMER`, `SONGWRITER` will be split at ";" characters and create multiple tags in the track file.
+
+In case the album has embedded pictures, the first picture will be available in the track file. Alternatively `trackfs` will scan the directory for a jpg-file with the same basename as the album file or a file named `folder.jpg`
 
 Manual Installation
 -------------------
@@ -128,8 +138,7 @@ Also keep in mind that this is the author's first python project, so don't expec
 
 There are a few ideas for additional improvements
 * Find out if there is a way to extract tracks from the FLAC+CUE file without re-encoding the track. This should allow to increase the performance when starting to read a track massively
-* Make use of some in memory buffer when streaming a track instead of streaming straight from a temporary file from disk. This should avoid sporadic audio glitches when playing track
-* Allow encoding in other audio-formats (esp. mp3). While you can create a FUSE chain, by using mp3fs with the trackfs filesystem as source, the performance of that approach is not very compelling and a unified solution might provide bette results. 
+* ~~Allow encoding in other audio-formats (esp. mp3). While you can create a FUSE chain, by using mp3fs with the trackfs filesystem as source, the performance of that approach is not very compelling and a unified solution might provide bette results.~~ ([ffmpegfs](https://github.com/nschlia/ffmpegfs/tree/VERSION_2.3) has picked up the idea of cuesheets for splitting and transcoding; currently only in dev branch, but soon on master. No need to reinvent the wheel) 
 
 Troubleshooting
 ---------------

@@ -37,21 +37,21 @@ class TrackFSOps(Operations):
 
     def __init__(self,
                  root,
-                 keep_flac=fusepath.DEFAULT_KEEP_PATH,
+                 keep_album=fusepath.DEFAULT_KEEP_ALBUM,
                  separator=fusepath.DEFAULT_TRACK_SEPARATOR,
-                 flac_extension=fusepath.DEFAULT_FLAC_EXTENSION,
+                 album_extension=fusepath.DEFAULT_ALBUM_EXTENSION,
                  title_length=fusepath.DEFAULT_MAX_TITLE_LEN,
                  tags_ignored=albuminfo.DEFAULT_IGNORE_TAGS_REX
                  ):
         self.root = os.path.realpath(root)
-        self.keep_flac = keep_flac
+        self.keep_flac = keep_album
         self.tracks = TrackManager()
         self._open_files = {}
         self._fusepath_factory = fusepath.Factory(
             track_separator=separator,
             max_title_len=title_length,
-            flac_extension=flac_extension,
-            keep_flac=keep_flac
+            album_extension=album_extension,
+            keep_album=keep_album
         )
         # TODO: avoid global init function
         albuminfo.init(tags_ignored)
