@@ -63,7 +63,7 @@ realias pypubtest 'pypackage twine upload -r testpypi dist/*'
 realias pypubprod 'pypackage twine upload dist/*'
 
 realias vcat 'cat /work/VERSION'
-realias vnew  'echo "s/trackfs@.*\$/trackfs@v$(cat /work/VERSION)/" | sed -f - -i /work/Dockerfile ; vcat'
+realias vnew  'echo "s/trackfs\\\\>=.*\$/trackfs\\\\>=$(cat /work/VERSION)/" | sed -f - -i /work/Dockerfile ; vcat'
 realias vpatch 'echo $(awk -F "." -v OFS="." "{print \$1, \$2, \$3+1}" /work/VERSION) > /work/VERSION ; vnew'
 realias vminor 'echo $(awk -F "." -v OFS="." "{print \$1, \$2+1, 0}" /work/VERSION) > /work/VERSION ; vnew'
 realias vmajor 'echo $(awk -F "." -v OFS="." "{print \$1+1, 0, 0}" /work/VERSION) > /work/VERSION ; vnew'
