@@ -2,38 +2,55 @@ on:
   push:
     branches:
       - master
-    # Sequence of patterns matched against refs/tags
-    #tags:
-    #  - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 name: Create Release
 
 jobs:
-  build:
-    name: Create Release
+  release:
+    name: Create release and publish to pypi
     runs-on: ubuntu-latest
-    env:
-      NEW_VERSION: .
-      MSG_SEPARATOR: |+
-
-        ___
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-      - name : Check for new version
+
+      - name: Get current version
+        run:  echo "VERSION=v$( cat VERSION )" >> $GITHUB_ENV
+      - name: Check if current version already exists as tag
+        id: checkVersion
+        uses: mukunku/tag-exists-action@v1.0.0
+        with: 
+          tag: ${{ env.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Publish to pypi if new version
+        if: ${{ steps.checkVersion.outputs.exists == 'false' }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
         run: |
-          VERSION=v$( cat VERSION )
-          if git tag --list | grep -q "${VERSION}"; then echo "existing version"; else echo "NEW_VERSION=${VERSION}" >> $GITHUB_ENV; fi
-      - name: Create Release
-        id: create_release
-        if: env.NEW_VERSION != '.'
+          python -m pip install --upgrade pip
+          pip install setuptools wheel twine
+      - name: Build and publish
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          python setup.py sdist bdist_wheel
+          twine upload dist/*
+
+      - name: Create release if new version
+        if: ${{ steps.checkVersion.outputs.exists == 'false' }}
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MSG_SEPARATOR: |+
+            ___
         with:
           tag_name: ${{ env.NEW_VERSION }}
           release_name: ${{ env.NEW_VERSION }}
           body: ${{ join( github.event.commits.*.message, env.MSG_SEPARATOR ) }}
           draft: false
           prerelease: false
+
