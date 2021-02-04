@@ -27,6 +27,7 @@ DEFAULT_IGNORE_TAGS_REX = re.compile('CUE_TRACK.*|COMMENT')
 
 class AlbumInfo:
     IGNORE_TAGS_REX = DEFAULT_IGNORE_TAGS_REX
+    CUE_FILE_EXTS = ['.cue', '.CUE']
 
     def __init__(self, path):
         self.path: str = path
@@ -38,10 +39,17 @@ class AlbumInfo:
     def format(self) -> str:
         return type(self.meta).__name__.upper()
 
+    def _find_accompanying_cue_file(self) -> Optional[os.PathLike]:
+        for basename in [self.path, os.path.splitext(self.path)[0]]:
+            for ext in self.CUE_FILE_EXTS:
+                fn = basename + ext
+                if os.path.exists(fn):
+                    return fn
+        return None
+
     def _cue_from_external_file(self) -> Optional[str]:
-        (base, ext) = os.path.splitext(self.path)
-        cue_path = base + ".cue"
-        if not os.path.exists(cue_path):
+        cue_path = self._find_accompanying_cue_file()
+        if cue_path is None:
             return None
         log.debug(f"found accompanying cue sheet")
         with open(cue_path, "rb") as fh:
