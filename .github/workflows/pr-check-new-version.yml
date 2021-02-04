@@ -1,0 +1,32 @@
+# This workflow will upload a Python Package using Twine when a release is created
+# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
+
+name: Verify that pull requests have new version
+
+on:
+  - workflow_dispatch
+  - pull_request
+
+jobs:
+  ensure_new_version:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Get current version
+        run:  echo "VERSION=v$( cat VERSION )" >> $GITHUB_ENV
+      - name: Check if current version already exists as tag
+        id: checkVersion
+        uses: mukunku/tag-exists-action@v1.0.0
+        with: 
+          tag: ${{ env.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: fail in case the current version already exists as tag
+        if: ${{ steps.checkVersion.outputs.exists == 'true' }}
+        run: exit 1
+
