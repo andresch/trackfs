@@ -29,9 +29,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TRACK_SEPARATOR     : str   = '.#-#.'
 DEFAULT_MAX_TITLE_LEN       : int   = 20
-DEFAULT_ALBUM_EXTENSION     : str   = '(\\.flac|\\.wav)'
+DEFAULT_ALBUM_EXTENSION     : str   = '(?i:\\.flac|\\.wav)'
 DEFAULT_VALID_CHARS         : str   = "-_() " + string.ascii_letters + string.digits
 DEFAULT_KEEP_ALBUM          : bool  = False
+DEFAULT_TRACK_EXTENSION     : str   = '.flac'
 
 @dataclass(frozen=True)
 class Factory:
@@ -42,14 +43,16 @@ class Factory:
     album_extension         : str   = DEFAULT_ALBUM_EXTENSION
     valid_filename_chars    : str   = DEFAULT_VALID_CHARS
     keep_album              : bool  = DEFAULT_KEEP_ALBUM
+    track_extension         : bool  = DEFAULT_TRACK_EXTENSION
     
     @cached_property
     def track_file_regex(self):
         separator_rex = self.track_separator.replace('.','\\.')
+        track_exentension_rex = self.track_extension.replace('.','\\.')
         flac_cue_rex = (
             '^(?P<basename>.*)(?P<extension>'+self.album_extension+')'+separator_rex
             + '(?P<num>\\d+)(?P<title>(\\.[^\\.]{,'+str(self.max_title_len)
-            + '}?)?)\.flac$'
+            + '}?)?)'+track_exentension_rex+'$'
         )
         log.debug("Factory.track_file_regex: "+flac_cue_rex)
         return re.compile(flac_cue_rex)
@@ -105,6 +108,8 @@ class FusePath:
     def album_ext_regex(self): return self._factory.album_ext_regex
     @property
     def keep_album(self): return self._factory.keep_album
+    @property
+    def track_extension(self): return self._factory.track_extension
 
     @cached_property
     def source(self):
@@ -124,7 +129,7 @@ class FusePath:
         if(self.is_track): 
             return (
                 f'{self.source_root}{self.extension}{self.track_separator}{self.num:03d}'
-                f'{self.title_fragment}.flac'
+                f'{self.title_fragment}{self.track_extension}'
             )
         else:  
             return self.source
