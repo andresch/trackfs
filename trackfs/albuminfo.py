@@ -71,7 +71,7 @@ class AlbumInfo:
 
     def track(self, num) -> Optional[cuesheet.Track]:
         trx = self.tracks()
-        if trx is None:
+        if len(trx) == 0 :
             return None
         t = trx[num - 1]
         if t.num == num:
