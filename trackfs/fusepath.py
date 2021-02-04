@@ -138,7 +138,7 @@ class FusePath:
             (basename, extension) = os.path.splitext(filename)
             if self.album_ext_regex.fullmatch(extension):
                 trx = albuminfo.get(os.path.join(self.source, filename)).tracks()
-                if trx is not None:
+                if len(trx) > 0:
                     if self.keep_album:
                         entries.append(filename)
                     for t in trx:
