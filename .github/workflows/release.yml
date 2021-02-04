@@ -48,8 +48,8 @@ jobs:
           MSG_SEPARATOR: |+
             ___
         with:
-          tag_name: ${{ env.NEW_VERSION }}
-          release_name: ${{ env.NEW_VERSION }}
+          tag_name: ${{ env.VERSION }}
+          release_name: ${{ env.VERSION }}
           body: ${{ join( github.event.commits.*.message, env.MSG_SEPARATOR ) }}
           draft: false
           prerelease: false
