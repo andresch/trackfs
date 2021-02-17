@@ -33,7 +33,9 @@ class AlbumInfo:
         self.path: str = path
 
     @cached_property
-    def meta(self) -> File:
+    def meta(self) -> Optional[File]:
+        if not os.path.isfile(self.path):
+            return None
         return File(self.path)
 
     def format(self) -> str:
@@ -61,6 +63,9 @@ class AlbumInfo:
     @cached_property
     def cue(self) -> Optional[cuesheet.CueSheet]:
         meta = self.meta
+        if not meta:
+            log.debug(f'path is not a file "{self.path}"');
+            return None
         raw_cue = meta.tags.get('CUESHEET', []) if meta.tags else []
         if len(raw_cue) == 0:
             log.debug(f"regular flac file without cue sheet")
