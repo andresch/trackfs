@@ -141,8 +141,9 @@ class FusePath:
         entries = ['.', '..']
         for filename in os.listdir(self.source):
             (basename, extension) = os.path.splitext(filename)
-            if self.album_ext_regex.fullmatch(extension):
-                trx = albuminfo.get(os.path.join(self.source, filename)).tracks()
+            filepath = os.path.join(self.source, filename)
+            if os.path.isfile(filepath) and self.album_ext_regex.fullmatch(extension):
+                trx = albuminfo.get(filepath).tracks()
                 if len(trx) > 0:
                     if self.keep_album:
                         entries.append(filename)

@@ -30,12 +30,11 @@ class AlbumInfo:
     CUE_FILE_EXTS = ['.cue', '.CUE']
 
     def __init__(self, path):
+        assert os.path.isfile(path)
         self.path: str = path
 
     @cached_property
-    def meta(self) -> Optional[File]:
-        if not os.path.isfile(self.path):
-            return None
+    def meta(self) -> File:
         return File(self.path)
 
     def format(self) -> str:
@@ -56,16 +55,17 @@ class AlbumInfo:
         log.debug(f"found accompanying cue sheet")
         with open(cue_path, "rb") as fh:
             cue_bytes = fh.read()
-        cue_str = cue_bytes.decode(chardet.detect(cue_bytes)['encoding'])
+        try:
+            cue_str = cue_bytes.decode(chardet.detect(cue_bytes)['encoding'])
+        except:
+            log.warning(f'could not detect/decoode character set of cue sheet file "{cue_path}"')
+            return None
         log.debug(f"cue-sheet:\n{cue_str}")
         return cue_str
 
     @cached_property
     def cue(self) -> Optional[cuesheet.CueSheet]:
         meta = self.meta
-        if not meta:
-            log.debug(f'path is not a file "{self.path}"');
-            return None
         raw_cue = meta.tags.get('CUESHEET', []) if meta.tags else []
         if len(raw_cue) == 0:
             log.debug(f"regular flac file without cue sheet")
@@ -75,7 +75,11 @@ class AlbumInfo:
         else:
             raw_cue = raw_cue[0]
         log.debug(f"raw cue sheet from FLAC file:\n{raw_cue}")
-        result = cuesheet.parse(raw_cue, meta.info.length)
+        try:
+            result = cuesheet.parse(raw_cue, meta.info.length)
+        except:
+            log.warning(f'could not parse cue sheet; ignore cue sheet')
+            return None
         log.debug(f"parsed cue sheet from FLAC file:\n{result}")
         return result
 
@@ -84,7 +88,7 @@ class AlbumInfo:
 
     def track(self, num) -> Optional[cuesheet.Track]:
         trx = self.tracks()
-        if len(trx) == 0 :
+        if len(trx) == 0:
             return None
         t = trx[num - 1]
         if t.num == num:
@@ -132,6 +136,7 @@ class AlbumInfo:
         if 'ARTIST' in tags:
             tags['COMPOSER'] = tags['ARTIST']
         return tags
+
 
 def init(ignore):
     log.info(f'Tags to ignore: "{ignore}"')
