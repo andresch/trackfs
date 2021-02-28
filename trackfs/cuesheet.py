@@ -152,7 +152,8 @@ class CueSheet:
         return self
 
     def tags(self):
-        return TagTools.object_tags(self, dir(self).remove('tracks'))
+        return TagTools.object_tags(self, [
+            t for t in vars(self).keys() if t != 'tracks'])
 
 
 @dataclass
