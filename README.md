@@ -8,6 +8,7 @@
 * FLAC files with embedded cuesheets (FLAC+CUE)
 * FLAC files with accompanying cuesheet
 * WAVE files with accompanying cuesheet
+* MP3 files with accompanying cuesheet (embedded cuesheet not tested)
 
 Accompanying cuesheets must use the fileextension `.cue` and have the same basename as album file.
 
@@ -38,7 +39,7 @@ Replace `/path/to/yourmusiclibrary` with the root directory where `trackfs` scan
 
 Once started you will find all directories and files from your music library also in the `trackfs`-filesystem. Only album files got replaced: Instead of a single album file you will find individual FLAC files for each track found in the cue sheet. The track-files will have the following names:
 
-    {album-file}.#-#.{tracknumber}.{track-title}.flac
+    {album-file}.#-#.{tracknumber}.{track-title}.{source_ext}
 
 While the tracks can be used like regular files, they don't exist in the physical file system on your machine. Instead `trackfs` creates them on the fly whenever an application starts loading any of the track files. This usually takes (depending on your system) a few seconds.
 
@@ -82,7 +83,7 @@ Instead it is recommended to let `trackfs` run as a regular user. For that to wo
 
 `trackfs` provides a few options that allow you to tweak its default behavior: 
 
-* `-e EXTENSION`, `--extension EXTENSION` (default: "(\\.flac|\\.wav)") : 
+* `-e EXTENSION`, `--extension EXTENSION` (default: "(\\.flac|\\.wav|\\.mp3)") : 
   A regular expression matching file extension of album files in the music library 
 * `-s SEPARATOR`, `--separator SEPARATOR` (default: ".#-#."): 
   The separator used inside the name of the track-files. Must never occur in regular filenames 

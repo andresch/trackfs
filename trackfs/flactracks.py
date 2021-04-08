@@ -249,6 +249,35 @@ class TrackManager:
 
         return track_file
 
+    def _extract_mp3_track(self, path: os.PathLike, fp: FusePath, album_info: albuminfo.AlbumInfo) -> os.PathLike:
+        """creates a real file for a given virtual track file
+
+        extracts the track from the underlying MP3+CUE file into
+        a temporary file and then opens the temporary file"""
+        log.info(f'open track "{path}"')
+
+        track_file = self._new_temp_filename()
+
+        track = album_info.track(fp.num)
+        mp3_cmd = (
+            f'mp3splt -Q -d {os.path.dirname(track_file)} -o {os.path.splitext(os.path.basename(track_file))[0]} '
+            f'-g "r%[@o,@n={track.num},@t={shlex.quote(track.title)},@a={shlex.quote(" ".join(track.artists))}]" '
+            f'{track.start.mp3split_time()} {track.end.mp3split_time()} '
+            f'"{fp.source}" && mv {track_file}.* {track_file}'
+        )
+        log.debug(f'extracting track with command: "{mp3_cmd}"')
+        rc = run(mp3_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+        with self.rwlock:
+            if rc != 0:
+                err_msg = f'failed to extract track #{fp.num} from file "{fp.source}"'
+                log.error(err_msg)
+                os.remove(track_file)
+                del self[path]
+                raise FlacSplitException(err_msg)
+            else:
+                self._add(path, track_file)
+        return track_file
+
     def prepare_track(self, path: os.PathLike, fp: FusePath) -> os.PathLike:
         log.info(f'prepare track "{path}"')
         assert fp.is_track
@@ -271,6 +300,8 @@ class TrackManager:
             return self._extract_wave_track(path, fp, album_info)
         elif audio_format == 'FLAC':
             return self._extract_flac_track(path, fp, album_info)
+        elif audio_format == 'MP3':
+            return self._extract_mp3_track(path, fp, album_info)
         else:
             err_msg = f'unexpected audio format "{audio_format}"; can\'t proceed'
             log.error(err_msg)
@@ -354,12 +385,20 @@ class TrackManager:
             album_info = albuminfo.get(fp.source)
             meta = album_info.meta
             track = album_info.track(fp.num)
-            return int(
-                (track.end - track.start).seconds()
-                * meta.info.channels
-                * (meta.info.bits_per_sample / 8)
-                * meta.info.sample_rate
-            )
+            if getattr(meta.info, 'bits_per_sample', None):  # flac
+                return int(
+                    (track.end - track.start).seconds()
+                    * meta.info.channels
+                    * (meta.info.bits_per_sample / 8)
+                    * meta.info.sample_rate
+                )
+            elif getattr(meta.info, 'bitrate', None):  # mp3
+                return int(
+                    (track.end - track.start).seconds()
+                    * meta.info.bitrate / 8
+                )
+            else:
+                return 0
         else:
             # use the actual size of the track-file
             return os.stat(track_info.temp_file_path).st_size
