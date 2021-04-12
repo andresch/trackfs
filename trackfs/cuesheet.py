@@ -258,6 +258,9 @@ class Time:
     def flac_time(self):
         return f'{self.mm:02d}:{self.ss:02d}.{int(100.0 / 75.0 * self.ff):02d}'
 
+    def mp3split_time(self):
+        return f'{self.mm:02d}.{self.ss:02d}.{int(100.0 / 75.0 * self.ff):02d}'
+
     def __repr__(self):
         return '%02d%02d%02d' % (self.mm, self.ss, self.ff)
 
