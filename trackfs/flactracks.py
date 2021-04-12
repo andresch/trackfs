@@ -15,7 +15,7 @@ import wave
 from dataclasses import dataclass
 from math import trunc
 from tempfile import mkstemp
-from subprocess import DEVNULL, run
+from subprocess import DEVNULL, PIPE, Popen, run
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Dict, Optional
 from threading import RLock, Thread
@@ -138,8 +138,8 @@ class TrackManager:
         return ' '.join([TrackManager._tag_as_flac_arg(k, v) for k, vs in tags.items() for v in vs])
 
     @staticmethod
-    def _new_temp_filename() -> os.PathLike:
-        (fh, temp_file) = mkstemp()
+    def _new_temp_filename(**kwargs) -> os.PathLike:
+        (fh, temp_file) = mkstemp(**kwargs)
         # we don't want to process the file in python; just want a unique filename
         # that we let flac write the track into
         # => close right away
@@ -166,26 +166,33 @@ class TrackManager:
 
         # extract picture from flac if available
         picture_file = self._new_temp_filename()
-        metaflac_cmd = f'metaflac --export-picture-to="{picture_file}" "{fp.source}"'
-        log.debug(f'extracting picture with command: "{metaflac_cmd}"')
-        rc = run(metaflac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+        metaflac_cmd = ['metaflac', '--export-picture-to', picture_file, fp.source]
+        log.debug(f'extracting picture with command: "{" ".join(metaflac_cmd)}"')
+        rc = run(metaflac_cmd, stdout=None, stderr=DEVNULL).returncode
         picture_arg = ""
         if rc == 0:
-            picture_arg = f' --picture="{picture_file}"'
+            picture_arg = picture_file
         else:
             local_album_art = self._find_albmum_art(fp)
             if local_album_art:
-                picture_arg = f' --picture="{local_album_art}"'
+                picture_arg = local_album_art
 
         track = album_info.track(fp.num)
-        flac_cmd = (
-            f'flac -d --silent --stdout --skip={track.start.flac_time()}'
-            f'  --until={track.end.flac_time()} "{fp.source}" '
-            f'| flac --silent -f --fast'
-            f'  {self.track_tags_as_flac_args(album_info,fp.num)}{picture_arg} -o {track_file} -'
-        )
-        log.debug(f'extracting track with command: "{flac_cmd}"')
-        rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+        flac_cmd_in = ['flac', '-d', '--silent', '--stdout',
+                       '--skip', track.start.flac_time(), '--until', track.end.flac_time(), fp.source]
+        ps = Popen(flac_cmd_in, stdout=PIPE)
+
+        flac_cmd_out = ['flac', '--silent', '-f', '--fast']
+        for k, vs in album_info.track_tags(fp.num).items():
+            for v in vs:
+                flac_cmd_out.extend(['--tag', f'{str(k).replace("=", " ")}={str(v).replace("=", " ")}'])
+        if picture_arg:
+            flac_cmd_out.extend(['--picture', picture_arg])
+        flac_cmd_out.extend(['-o', track_file, '-'])
+
+        log.debug(f'extracting track with command: "{" ".join(flac_cmd_in)} | {" ".join(flac_cmd_out)}"')
+        rc = run(flac_cmd_out, stdin=ps.stdout, stdout=None, stderr=DEVNULL).returncode
+
         os.remove(picture_file)
         with self.rwlock:
             if rc != 0:
@@ -256,17 +263,18 @@ class TrackManager:
         a temporary file and then opens the temporary file"""
         log.info(f'open track "{path}"')
 
-        track_file = self._new_temp_filename()
+        track_file = self._new_temp_filename(suffix='.mp3')  # mp3splt adds .mp3 ext
 
         track = album_info.track(fp.num)
-        mp3_cmd = (
-            f'mp3splt -Q -d {os.path.dirname(track_file)} -o {os.path.splitext(os.path.basename(track_file))[0]} '
-            f'-g "r%[@o,@n={track.num},@t={shlex.quote(track.title)},@a={shlex.quote(" ".join(track.artists))}]" '
-            f'{track.start.mp3split_time()} {track.end.mp3split_time()} '
-            f'"{fp.source}" && mv {track_file}.* {track_file}'
-        )
-        log.debug(f'extracting track with command: "{mp3_cmd}"')
-        rc = run(mp3_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
+        mp3_cmd = [
+            'mp3splt', '-Q', '-d', os.path.dirname(track_file),
+            '-o', os.path.splitext(os.path.basename(track_file))[0],
+            '-g', f'r%[@o,@n={track.num},@t={track.title},@a={" ".join(track.artists)}]',
+            track.start.mp3split_time(), track.end.mp3split_time(), fp.source,
+        ]
+
+        log.debug(f'extracting track with command: "{" ".join(mp3_cmd)}"')
+        rc = run(mp3_cmd, stdout=None, stderr=DEVNULL).returncode
         with self.rwlock:
             if rc != 0:
                 err_msg = f'failed to extract track #{fp.num} from file "{fp.source}"'

@@ -83,6 +83,10 @@ _DEFAULT_FACTORY = Factory()
 
 @dataclass(frozen=True)
 class FusePath:
+    VEXTENSION = {
+        # 'mpeg3': 'mp3',  possible use
+        'wav': 'flac'  # all wav files saves with flac extension to preserve metadata
+    }
     ''' represents an entry in the virtual trackfs filesystem'''
     source_root             : str
     extension               : str
@@ -124,9 +128,9 @@ class FusePath:
         if(self.is_track): 
             return (
                 f'{self.source_root}{self.extension}{self.track_separator}{self.num:03d}'
-                f'{self.title_fragment}{self.extension}'
+                f'{self.title_fragment}{self.VEXTENSION.get(self.extension, self.extension)}'
             )
-        else:  
+        else:
             return self.source
             
     def dirname(self):
