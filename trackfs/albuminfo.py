@@ -13,7 +13,7 @@ import shlex
 from functools import lru_cache, cached_property
 from typing import List, Optional
 
-from mutagen import File
+from mutagen import File, MutagenError
 import chardet
 
 from . import cuesheet
@@ -35,7 +35,10 @@ class AlbumInfo:
 
     @cached_property
     def meta(self) -> File:
-        return File(self.path)
+        try:
+            return File(self.path)
+        except MutagenError:
+            return type("DummyType", (object,), {'tags': None})()
 
     def format(self) -> str:
         return type(self.meta).__name__.upper()

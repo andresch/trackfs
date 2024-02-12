@@ -40,17 +40,18 @@ preconditions / has the following software installed:
 * **[python](https://www.python.org/)**: use recent a python version (>=3.8) (trackfs is developped and tested with 3.8), including pip
 * **[fuse](https://github.com/libfuse/libfuse)**: make sure that you have FUSE support enabled in your kernal and the FUSE libraries installed
 * **[flac](https://xiph.org/flac/)**: make sure you have official flac binaries (flac and metaflac) installed and on your path
+* **[mp3splt](http://mp3splt.sourceforge.net/)**: make sure you have official mp3splt binaries installed and on your path
 
 On most recent debian based system you should get all dependencies with
 
 ```
-sudo apt-get install python3 python3-pip fuse libfuse-dev flac
+sudo apt-get install python3 python3-pip fuse libfuse-dev flac mp3splt
 ```
 
 On alpine linux (used for the dockerized version of `trackfs`) you would use
 
 ```
-sudo apk add python3 py3-pip fuse fuse-dev flac 
+sudo apk add python3 py3-pip fuse fuse-dev flac mp3splt
 ``` 
 
 #### Verify that you have the expected python version
