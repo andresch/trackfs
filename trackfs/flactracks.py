@@ -269,7 +269,7 @@ class TrackManager:
         mp3_cmd = [
             'mp3splt', '-Q', '-d', os.path.dirname(track_file),
             '-o', os.path.splitext(os.path.basename(track_file))[0],
-            '-g', f'r%[@o,@n={track.num},@t={track.title},@a={" ".join(track.artists)}]',
+            '-g', f'r%[@o,@n={track.num},@t={track.title},@a={" ".join(track.artists or [])}]',
             track.start.mp3split_time(), track.end.mp3split_time(), fp.source,
         ]
 
